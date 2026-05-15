@@ -350,10 +350,24 @@ async function watchUfwLog() {
 
     if (success && stdout.trim()) {
       const lines = stdout.trim().split('\n');
-      const blocks = lines.filter((l) => /\[UFW BLOCK\]/i.test(l));
+      const allBlocks = lines.filter((l) => /\[UFW BLOCK\]/i.test(l));
+
+      // Filter out routine LAN noise
+      const lanNoisePatterns = [
+        /DST=224\./,                    // Multicast
+        /DST=255\.255\.255\.255/,       // Broadcast
+        /PROTO=2\b/,                    // IGMP
+        /PROTO=ICMPv6 TYPE=13[35]/,     // IPv6 Neighbor Solicitation/Advertisement
+        /PROTO=ICMPv6 TYPE=134/,        // IPv6 Router Advertisement
+        /DPT=7\b/,                      // UDP echo (router health check)
+        /SRC=fe80:/i,                   // IPv6 link-local
+      ];
+
+      const blocks = allBlocks.filter(
+        (l) => !lanNoisePatterns.some((p) => p.test(l))
+      );
 
       if (blocks.length > 20) {
-        // Summarize instead of spamming
         await thread.send(
           `🔥 **UFW:** ${blocks.length} blocked connections in recent batch.\nTop blocked:\n\`\`\`\n${blocks.slice(-5).join('\n').substring(0, 1500)}\n\`\`\``
         );
