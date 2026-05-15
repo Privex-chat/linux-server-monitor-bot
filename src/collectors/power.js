@@ -63,11 +63,14 @@ async function getPowerUsage() {
   for (const domain of domains) {
     const energyResult = await readProcFile(`${domain.path}/energy_uj`);
     if (energyResult.success) {
-      currentReadings[domain.id] = {
-        energy: parseInt(energyResult.content.trim()),
-        name: domain.name,
-        path: domain.path,
-      };
+      const energy = parseInt(energyResult.content.trim(), 10);
+      if (!Number.isNaN(energy)) {
+        currentReadings[domain.id] = {
+          energy,
+          name: domain.name,
+          path: domain.path,
+        };
+      }
     }
   }
 
@@ -86,11 +89,18 @@ async function getPowerUsage() {
         if (energyDelta < 0) {
           const maxPath = `${curr.path}/max_energy_range_uj`;
           const maxResult = await readProcFile(maxPath);
-          const maxEnergy = maxResult.success ? parseInt(maxResult.content.trim()) : 2 ** 32;
-          energyDelta = maxEnergy - prev.energy + curr.energy;
+          const maxEnergy = maxResult.success ? parseInt(maxResult.content.trim(), 10) : NaN;
+          if (!Number.isNaN(maxEnergy)) {
+            energyDelta = maxEnergy - prev.energy + curr.energy;
+          } else {
+            // Fallback if maxEnergy is unavailable but counter wrapped
+            energyDelta = curr.energy; 
+          }
         }
 
-        const watts = energyDelta / 1e6 / elapsed;
+        let watts = energyDelta / 1e6 / elapsed;
+        if (Number.isNaN(watts) || watts < 0) watts = 0;
+
         const name = curr.name.toLowerCase();
 
         if (name.includes('package')) {
@@ -106,11 +116,15 @@ async function getPowerUsage() {
         result.domains.push({ name: curr.name, watts: Math.round(watts * 10) / 10 });
       }
 
+      result.package = Number.isNaN(result.package) ? 0 : result.package;
+      result.dram = Number.isNaN(result.dram) ? 0 : result.dram;
+
       result.totalRapl = Math.round((result.package + result.dram) * 10) / 10;
       // Estimate total system power: base load (mobo, fans, RAM, drives) + RAPL
-      const baseLoad = config.POWER_BASE_LOAD_W;
+      const baseLoad = config.POWER_BASE_LOAD_W || 33;
+      const psuWattage = config.PSU_WATTAGE || 450;
       result.estimatedTotal = Math.round((baseLoad + result.totalRapl) * 10) / 10;
-      result.psuPercent = Math.round((result.estimatedTotal / config.PSU_WATTAGE) * 1000) / 10;
+      result.psuPercent = Math.round((result.estimatedTotal / psuWattage) * 1000) / 10;
     }
   }
 
