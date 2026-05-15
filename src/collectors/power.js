@@ -107,7 +107,9 @@ async function getPowerUsage() {
       }
 
       result.totalRapl = Math.round((result.package + result.dram) * 10) / 10;
-      result.estimatedTotal = Math.round(result.totalRapl * config.POWER_OVERHEAD_MULTIPLIER * 10) / 10;
+      // Estimate total system power: base load (mobo, fans, RAM, drives) + RAPL
+      const baseLoad = config.POWER_BASE_LOAD_W;
+      result.estimatedTotal = Math.round((baseLoad + result.totalRapl) * 10) / 10;
       result.psuPercent = Math.round((result.estimatedTotal / config.PSU_WATTAGE) * 1000) / 10;
     }
   }

@@ -165,29 +165,43 @@ async function watchSyslog() {
     }
 
     const lines = stdout.trim().split('\n');
-    // Only surface errors, warnings, critical events
-    const important = lines.filter((l) =>
-      /error|fail|critical|panic|oom|killed|segfault|out of memory/i.test(l)
-    );
+
+    // Skip known noisy/spammy services
+    const noisyServices = [
+      /cloudflared\[/,       // Broken tunnel retries
+      /snapd\[/,             // Snap auto-updates
+      /systemd-resolved\[/,  // DNS resolver chatter
+      /networkd-dispatcher\[/, // Network state changes
+    ];
+
+    // Only surface errors, warnings, critical events (excluding noise)
+    const important = lines.filter((l) => {
+      if (!(/error|fail|critical|panic|oom|killed|segfault|out of memory/i.test(l))) return false;
+      if (noisyServices.some((p) => p.test(l))) return false;
+      return true;
+    });
 
     if (important.length > 0) {
       // Deduplicate: collapse repeated identical messages
       const deduped = [];
       const counts = new Map();
       for (const line of important) {
-        // Strip timestamp to compare message content
-        const msgPart = line.replace(/^\S+\s+\S+\s+\S+\s+/, '').trim();
+        // Strip syslog timestamp AND any embedded ISO/epoch timestamps for comparison
+        const msgPart = line
+          .replace(/^\S+\s+\S+\s+\S+\s+/, '')  // syslog timestamp + hostname
+          .replace(/\d{4}-\d{2}-\d{2}T[\d:.Z+-]+/g, '')  // embedded ISO timestamps
+          .replace(/\d{10,}/g, '')  // epoch timestamps
+          .trim();
         if (counts.has(msgPart)) {
           counts.set(msgPart, counts.get(msgPart) + 1);
         } else {
           counts.set(msgPart, 1);
-          deduped.push(line);
+          deduped.push({ line, msgPart });
         }
       }
 
       // Append repeat counts
-      const output = deduped.map((line) => {
-        const msgPart = line.replace(/^\S+\s+\S+\s+\S+\s+/, '').trim();
+      const output = deduped.map(({ line, msgPart }) => {
         const count = counts.get(msgPart);
         return count > 1 ? `${line} [×${count}]` : line;
       });

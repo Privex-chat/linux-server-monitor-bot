@@ -1,7 +1,7 @@
 module.exports = {
   apps: [
     {
-      name: 'server-monitor',
+      name: 'server-monitor-bot',
       script: './index.js',
       cwd: __dirname,
       watch: false,

@@ -6,6 +6,7 @@ module.exports = {
   GUILD_ID: process.env.GUILD_ID || '1498377364231422106',
   CHANNEL_NAME: process.env.CHANNEL_NAME || 'server-monitor',
   ALERT_USER_ID: process.env.ALERT_USER_ID || '1053965380957241344',
+  SUDO_ROLE_NAME: process.env.SUDO_ROLE_NAME || 'sudo',
 
   // ── Intervals ────────────────────────────────────────────
   LIVE_INTERVAL_MIN_MS: 12 * 1000,      // 12 seconds minimum
@@ -22,7 +23,9 @@ module.exports = {
   TIMEZONE: 'Asia/Kolkata',
 
   // ── Power ────────────────────────────────────────────────
-  POWER_OVERHEAD_MULTIPLIER: 1.4,
+  // Base system load in watts (motherboard ~20W, fans ~3W, RAM 16GB ~4W, HDD ~6W)
+  // RAPL only measures CPU/DRAM; this covers everything else
+  POWER_BASE_LOAD_W: 33,
   PSU_WATTAGE: 450,
 
   // ── Security thresholds ──────────────────────────────────

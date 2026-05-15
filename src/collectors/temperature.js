@@ -92,8 +92,21 @@ async function getDriveTemps() {
         // SATA/HDD: attribute 194 or 190
         const tempAttr = data.ata_smart_attributes?.table?.find((a) => a.id === 194 || a.id === 190);
         if (tempAttr) {
-          drives.push({ device: name, temp: tempAttr.raw.value % 1000, type: 'HDD/SSD' });
-          continue;
+          // raw.string often has "35" or "35 (Min/Max 20/42)"
+          let temp = null;
+          if (tempAttr.raw?.string) {
+            const strMatch = tempAttr.raw.string.match(/^(\d+)/);
+            if (strMatch) temp = parseInt(strMatch[1]);
+          }
+          // Fallback to raw.value, but only if it's a sane temperature
+          if (temp === null && tempAttr.raw?.value !== undefined) {
+            const rawVal = tempAttr.raw.value % 256; // Temperature is usually in the lowest byte
+            if (rawVal > 0 && rawVal < 120) temp = rawVal;
+          }
+          if (temp !== null && temp > 0 && temp < 120) {
+            drives.push({ device: name, temp, type: 'HDD/SSD' });
+            continue;
+          }
         }
         // NVMe
         if (data.temperature?.current) {

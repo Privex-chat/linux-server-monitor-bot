@@ -1,5 +1,6 @@
 {
   "channelId": null,
+  "sudoRoleId": null,
   "messageIds": {
     "liveStats": null,
     "dailySummary": null,

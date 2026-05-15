@@ -9,6 +9,7 @@ const securityStatus = require('./src/tasks/securityStatus');
 const summaries = require('./src/tasks/summaries');
 const securityScan = require('./src/tasks/securityScan');
 const logWatcher = require('./src/tasks/logWatcher');
+const { handleMessage } = require('./src/commands');
 
 // ── Validate config ──────────────────────────────────────
 if (!config.DISCORD_TOKEN || config.DISCORD_TOKEN === 'your_bot_token_here') {
@@ -134,6 +135,9 @@ client.once('ready', async () => {
     process.exit(1);
   }
 });
+
+// ── Command handler ──────────────────────────────────────
+client.on('messageCreate', handleMessage);
 
 // ── Error handling ───────────────────────────────────────
 client.on('error', (err) => {

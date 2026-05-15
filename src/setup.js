@@ -144,8 +144,52 @@ async function ensureSetup(guild) {
     threads[key] = thread;
   }
 
-  logger.info('Setup complete. Channel, messages, and threads verified.');
-  return { channel, messages, threads };
+  // ── 4. Ensure "sudo" role exists ──
+  const SUDO_ROLE_NAME = config.SUDO_ROLE_NAME || 'sudo';
+  let sudoRole = null;
+
+  if (state.sudoRoleId) {
+    try {
+      sudoRole = await guild.roles.fetch(state.sudoRoleId);
+    } catch {
+      logger.warn('Stored sudo role not found, will create a new one.');
+      sudoRole = null;
+    }
+  }
+
+  if (!sudoRole) {
+    // Search existing roles by name
+    sudoRole = guild.roles.cache.find((r) => r.name === SUDO_ROLE_NAME) || null;
+  }
+
+  if (!sudoRole) {
+    logger.info(`Creating role @${SUDO_ROLE_NAME}...`);
+    sudoRole = await guild.roles.create({
+      name: SUDO_ROLE_NAME,
+      color: 0x2ecc71, // Terminal green
+      mentionable: false,
+      reason: 'Server Monitor Bot — command access role',
+    });
+    logger.info(`Created role @${SUDO_ROLE_NAME} (${sudoRole.id})`);
+  }
+
+  await updateState((s) => {
+    s.sudoRoleId = sudoRole.id;
+  });
+
+  // Auto-assign the role to the alert user if they don't have it
+  try {
+    const alertMember = await guild.members.fetch(config.ALERT_USER_ID);
+    if (alertMember && !alertMember.roles.cache.has(sudoRole.id)) {
+      await alertMember.roles.add(sudoRole);
+      logger.info(`Auto-assigned @${SUDO_ROLE_NAME} role to alert user.`);
+    }
+  } catch (err) {
+    logger.warn(`Could not auto-assign sudo role to alert user: ${err.message}`);
+  }
+
+  logger.info('Setup complete. Channel, messages, threads, and role verified.');
+  return { channel, messages, threads, sudoRoleId: sudoRole.id };
 }
 
 module.exports = { ensureSetup };
