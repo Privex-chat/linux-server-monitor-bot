@@ -1,4 +1,5 @@
 const { safeExec } = require('../utils/exec');
+const logPaths = require('../utils/logPaths');
 const config = require('../../config');
 const fs = require('fs').promises;
 
@@ -58,8 +59,10 @@ async function getSecurityStatus() {
 async function getSSHInfo() {
   const result = { failedCount: 0, failedIPs: [], recentAttempts: [], available: false };
 
-  // Count failed attempts in last 24h from auth.log
-  const { stdout, success } = await safeExec('sudo', ['grep', '-c', 'Failed password', '/var/log/auth.log'], {
+  // Count failed attempts from auth log (distro-aware path)
+  const authLog = logPaths.resolve().auth;
+  if (!authLog) return result;
+  const { stdout, success } = await safeExec('sudo', ['grep', '-c', 'Failed password', authLog], {
     timeout: 5000,
   });
 
@@ -73,7 +76,7 @@ async function getSSHInfo() {
     'bash',
     [
       '-c',
-      "sudo grep 'Failed password' /var/log/auth.log | grep -oP 'from \\\\K[^ ]+' | sort | uniq -c | sort -rn | head -10",
+      `sudo grep 'Failed password' ${authLog} | grep -oP 'from \\\\K[^ ]+' | sort | uniq -c | sort -rn | head -10`,
     ],
     { timeout: 5000 }
   );
@@ -89,7 +92,7 @@ async function getSSHInfo() {
   }
 
   // Recent failed attempts (last 5)
-  const recentResult = await safeExec('bash', ['-c', "sudo grep 'Failed password' /var/log/auth.log | tail -5"], {
+  const recentResult = await safeExec('bash', ['-c', `sudo grep 'Failed password' ${authLog} | tail -5`], {
     timeout: 5000,
   });
 
@@ -164,7 +167,7 @@ async function getUfwInfo() {
   // Count blocked connections from UFW log
   const blockResult = await safeExec(
     'bash',
-    ['-c', "sudo grep -c '\\[UFW BLOCK\\]' /var/log/ufw.log 2>/dev/null || echo 0"],
+    ['-c', `sudo grep -c '\\[UFW BLOCK\\]' ${logPaths.resolve().ufw || '/dev/null'} 2>/dev/null || echo 0`],
     { timeout: 5000 }
   );
   if (blockResult.success) {
@@ -362,12 +365,14 @@ async function getClamAVStatus() {
 // Get new auth log entries since a given offset
 async function getAuthLogEntries(sinceOffset = 0) {
   try {
-    const stat = await fs.stat('/var/log/auth.log');
+    const authLogPath = logPaths.resolve().auth;
+    if (!authLogPath) return { entries: [], newOffset: sinceOffset };
+    const stat = await fs.stat(authLogPath);
     if (stat.size <= sinceOffset) return { entries: [], newOffset: sinceOffset };
 
     const { stdout, success } = await safeExec(
       'bash',
-      ['-c', `sudo tail -c +${sinceOffset + 1} /var/log/auth.log | head -c 50000`],
+      ['-c', `sudo tail -c +${sinceOffset + 1} ${authLogPath} | head -c 50000`],
       { timeout: 5000 }
     );
 

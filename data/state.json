@@ -15,6 +15,7 @@
     "logs-pm2": null,
     "logs-auth": null,
     "logs-security": null,
+    "logs-commands": null,
     "logs-nginx": null,
     "logs-power": null
   },

@@ -13,7 +13,7 @@ Thanks for your interest in contributing! This guide covers everything you need 
 ### Getting Started
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/linux-server-monitor-bot.git
+git clone https://github.com/Privex-chat/linux-server-monitor-bot.git
 cd linux-server-monitor-bot
 npm install
 
@@ -36,6 +36,8 @@ npm run lint        # Check for issues
 npm run lint:fix    # Auto-fix what's possible
 npm run format      # Format with Prettier
 npm run check       # Lint + format check (CI-ready)
+npm test            # Run unit tests (Jest)
+npm run test:watch  # Watch mode for TDD
 ```
 
 ## Project Structure
@@ -70,9 +72,10 @@ Open an issue describing:
 
 1. Fork the repo and create a branch from `main`
 2. Make your changes
-3. Run `npm run check` — ensure no lint or format errors
-4. Test on a real Linux system if your change touches collectors or commands
-5. Open a PR with a clear description of what and why
+3. Run `npm test` — ensure all unit tests pass
+4. Run `npm run check` — ensure no lint or format errors
+5. Test on a real Linux system if your change touches collectors or commands
+6. Open a PR with a clear description of what and why
 
 ### Adding a New Command
 
@@ -80,16 +83,17 @@ See the "Adding a New Command" section in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ### Adding Support for a New Distro
 
-The bot currently targets Debian/Ubuntu. To add support for another distro:
+The bot auto-detects distro family via `src/utils/distro.js` (parses `/etc/os-release`). Currently supports: Debian, RHEL, Arch, SUSE, Alpine. To add a new family:
 
-1. Check which commands differ (e.g., `apt` vs `dnf`, `journalctl` vs `/var/log/syslog`)
-2. Add distro detection in the relevant collector
-3. Test on the target distro
-4. Document any additional setup steps in the README
+1. Add the `ID_LIKE` / `ID` mapping in `distro.js` `detectFamily()`
+2. Add log path candidates in the `LOG_PATHS` map
+3. Add tests in `tests/distro.test.js`
+4. Test on the target distro
+5. Document any additional setup steps in the README
 
 ## Guidelines
 
-- **Keep dependencies minimal.** The bot currently has only 3 runtime deps. Don't add a package for something achievable in a few lines of code.
+- **Keep dependencies minimal.** Runtime deps are intentionally few (discord.js, node-cron, pino). Don't add a package for something achievable in a few lines of code.
 - **Collectors must be pure.** They gather data and return it — no Discord API calls, no side effects.
 - **Validate all user input.** Anything from Discord commands must be sanitized before reaching `safeExec()`.
 - **Handle failures gracefully.** Missing tools (sensors, docker, pm2) should result in "N/A", not crashes.

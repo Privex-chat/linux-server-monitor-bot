@@ -18,6 +18,7 @@ const THREADS = [
   { key: 'logs-pm2', name: '📋 logs-pm2' },
   { key: 'logs-auth', name: '📋 logs-auth' },
   { key: 'logs-security', name: '📋 logs-security' },
+  { key: 'logs-commands', name: '📋 logs-commands' },
   { key: 'logs-nginx', name: '📋 logs-nginx' },
   { key: 'logs-power', name: '📋 logs-power' },
 ];

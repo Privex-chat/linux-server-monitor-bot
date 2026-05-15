@@ -10,12 +10,12 @@ const summaries = require('./src/tasks/summaries');
 const securityScan = require('./src/tasks/securityScan');
 const logWatcher = require('./src/tasks/logWatcher');
 const { handleMessage, setAuditThread } = require('./src/commands');
+const { validateAlertConfig } = require('./src/utils/alert');
 
 // ── Validate required config ─────────────────────────────
 const required = {
   DISCORD_TOKEN: config.DISCORD_TOKEN,
   GUILD_ID: config.GUILD_ID,
-  ALERT_USER_ID: config.ALERT_USER_ID,
 };
 
 const missing = Object.entries(required)
@@ -24,6 +24,12 @@ const missing = Object.entries(required)
 
 if (missing.length > 0) {
   logger.error(`Missing required env vars: ${missing.join(', ')}. Copy .env.example to .env and fill them in.`);
+  process.exit(1);
+}
+
+const alertError = validateAlertConfig();
+if (alertError) {
+  logger.error(alertError);
   process.exit(1);
 }
 
@@ -58,9 +64,9 @@ client.once('ready', async () => {
     // Run setup — create channel, messages, threads
     const resources = await ensureSetup(guild);
 
-    // Wire up audit logging to the security thread
-    if (resources.threads['logs-security']) {
-      setAuditThread(resources.threads['logs-security']);
+    // Wire up audit logging to the commands thread
+    if (resources.threads['logs-commands']) {
+      setAuditThread(resources.threads['logs-commands']);
     }
 
     // Initialize all task modules

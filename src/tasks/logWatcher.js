@@ -1,6 +1,8 @@
 const fs = require('fs').promises;
 const { safeExec } = require('../utils/exec');
 const { updateState, getState } = require('../utils/storage');
+const logPaths = require('../utils/logPaths');
+const { alertMention } = require('../utils/alert');
 const config = require('../../config');
 const logger = require('../utils/logger');
 
@@ -33,7 +35,8 @@ async function watchAuthLog() {
 
   try {
     const state = getState();
-    const logPath = '/var/log/auth.log';
+    const logPath = logPaths.resolve().auth;
+    if (!logPath) return; // Log file not found on this distro
 
     let fileSize;
     try {
@@ -51,7 +54,7 @@ async function watchAuthLog() {
 
     const { stdout, success } = await safeExec(
       'bash',
-      ['-c', `sudo tail -c +${effectiveOffset + 1} /var/log/auth.log | head -c 50000`],
+      ['-c', `sudo tail -c +${effectiveOffset + 1} ${logPath} | head -c 50000`],
       { timeout: 5000 }
     );
 
@@ -128,9 +131,7 @@ async function watchAuthLog() {
       // Alert on high volume of failures
       const failCount = importantLines.filter((l) => /Failed password|Invalid user/i.test(l)).length;
       if (failCount >= 5) {
-        await thread.send(
-          `⚠️ <@${config.ALERT_USER_ID}> **${failCount} failed auth attempts** detected in recent log batch.`
-        );
+        await thread.send(`⚠️ ${alertMention()} **${failCount} failed auth attempts** detected in recent log batch.`);
       }
     }
 
@@ -150,7 +151,8 @@ async function watchSyslog() {
 
   try {
     const state = getState();
-    const logPath = '/var/log/syslog';
+    const logPath = logPaths.resolve().syslog;
+    if (!logPath) return; // Log file not found on this distro
 
     let fileSize;
     try {
@@ -167,7 +169,7 @@ async function watchSyslog() {
 
     const { stdout, success } = await safeExec(
       'bash',
-      ['-c', `sudo tail -c +${effectiveOffset + 1} /var/log/syslog | head -c 50000`],
+      ['-c', `sudo tail -c +${effectiveOffset + 1} ${logPath} | head -c 50000`],
       { timeout: 5000 }
     );
 
@@ -304,7 +306,7 @@ async function watchNginxLogs() {
           if (attacks.length > 0) {
             const truncated = attacks.slice(0, 10).map((l) => l.substring(0, 150));
             await thread.send(
-              `🛡️ **${attacks.length} suspicious nginx requests detected:**\n<@${config.ALERT_USER_ID}>\n\`\`\`\n${truncated.join('\n')}\n\`\`\``
+              `🛡️ **${attacks.length} suspicious nginx requests detected:**\n${alertMention()}\n\`\`\`\n${truncated.join('\n')}\n\`\`\``
             );
           }
         }
@@ -351,7 +353,7 @@ async function watchPm2Events() {
           let msg = `${icon} **PM2 [${proc.name}]** status changed: \`${prev.status}\` → \`${status}\``;
 
           if (status === 'errored' || status === 'stopped') {
-            msg += `\n<@${config.ALERT_USER_ID}>`;
+            msg += `\n${alertMention()}`;
           }
 
           await thread.send(msg);
@@ -403,7 +405,7 @@ async function watchDockerEvents() {
           msg += `\n   Image: \`${c.Image}\` │ Status: \`${c.Status}\``;
 
           if (c.State === 'exited' || c.State === 'dead') {
-            msg += `\n<@${config.ALERT_USER_ID}>`;
+            msg += `\n${alertMention()}`;
           }
 
           await thread.send(msg);
@@ -426,7 +428,8 @@ async function watchUfwLog() {
   if (!thread) return;
 
   try {
-    const logPath = '/var/log/ufw.log';
+    const logPath = logPaths.resolve().ufw;
+    if (!logPath) return; // UFW log not found
     const state = getState();
 
     let fileSize;

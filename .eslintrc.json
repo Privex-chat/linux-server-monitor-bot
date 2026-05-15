@@ -7,6 +7,14 @@
   "parserOptions": {
     "ecmaVersion": 2022
   },
+  "overrides": [
+    {
+      "files": ["tests/**/*.js", "jest.config.js"],
+      "env": {
+        "jest": true
+      }
+    }
+  ],
   "rules": {
     "no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }],
     "no-console": "off",

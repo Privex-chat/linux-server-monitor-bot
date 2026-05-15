@@ -25,6 +25,7 @@ const DEFAULT_STATE = {
     'logs-pm2': null,
     'logs-auth': null,
     'logs-security': null,
+    'logs-commands': null,
     'logs-nginx': null,
     'logs-power': null,
   },
@@ -82,9 +83,11 @@ async function loadState() {
 
 async function saveState() {
   // Serialize writes: each save waits for the previous one to finish
-  writeLock = writeLock.then(() => atomicWrite()).catch((err) => {
-    logger.error('Failed to save state:', err.message);
-  });
+  writeLock = writeLock
+    .then(() => atomicWrite())
+    .catch((err) => {
+      logger.error('Failed to save state:', err.message);
+    });
   return writeLock;
 }
 

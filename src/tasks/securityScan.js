@@ -1,4 +1,5 @@
 const { safeExec } = require('../utils/exec');
+const { alertMention } = require('../utils/alert');
 const config = require('../../config');
 const logger = require('../utils/logger');
 
@@ -35,7 +36,7 @@ async function runRkhunter() {
     await thread.send(`🔍 **rkhunter scan — warnings found:**\n\`\`\`\n${output.substring(0, 1800)}\n\`\`\``);
 
     if (output.toLowerCase().includes('rootkit')) {
-      await thread.send(`🔴 <@${config.ALERT_USER_ID}> **CRITICAL: Potential rootkit detected!**`);
+      await thread.send(`🔴 ${alertMention()} **CRITICAL: Potential rootkit detected!**`);
     }
   } else {
     await thread.send('🔍 **rkhunter scan:** ✅ No warnings. System clean.');
@@ -74,7 +75,7 @@ async function runClamAVScan() {
     .map((l) => l.trim());
 
   if (infected.length > 0) {
-    const alertMsg = `🦠 **ClamAV scan — ${infected.length} INFECTED file(s) found!**\n<@${config.ALERT_USER_ID}>\n\`\`\`\n${infected.slice(0, 20).join('\n')}\n\`\`\``;
+    const alertMsg = `🦠 **ClamAV scan — ${infected.length} INFECTED file(s) found!**\n${alertMention()}\n\`\`\`\n${infected.slice(0, 20).join('\n')}\n\`\`\``;
     await thread.send(alertMsg.substring(0, 2000));
   } else {
     await thread.send('🦠 **ClamAV scan:** ✅ No infected files found.');

@@ -1,6 +1,7 @@
 const securityCollector = require('../collectors/security');
 const embeds = require('../formatters/embeds');
 const { getState } = require('../utils/storage');
+const { alertMention } = require('../utils/alert');
 const config = require('../../config');
 const logger = require('../utils/logger');
 
@@ -28,7 +29,7 @@ async function run() {
     if (secData.shouldAlert && resources.threads['logs-security']) {
       const alertLines = [];
       alertLines.push(`${secData.levelEmoji} **Security Alert: ${secData.level}**`);
-      alertLines.push(`<@${config.ALERT_USER_ID}>`);
+      alertLines.push(alertMention());
 
       if (secData.suspiciousProcs.length > 0) {
         alertLines.push(`\n**Suspicious Processes:**`);

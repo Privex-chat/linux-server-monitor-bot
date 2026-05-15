@@ -5,7 +5,8 @@ module.exports = {
   DISCORD_TOKEN: process.env.DISCORD_TOKEN,
   GUILD_ID: process.env.GUILD_ID,
   CHANNEL_NAME: process.env.CHANNEL_NAME || 'server-monitor',
-  ALERT_USER_ID: process.env.ALERT_USER_ID,
+  ALERT_USER_ID: process.env.ALERT_USER_ID || null,
+  ALERT_ROLE_ID: process.env.ALERT_ROLE_ID || null,
   OWNER_IDS: process.env.OWNER_IDS
     ? process.env.OWNER_IDS.split(',').map((s) => s.trim())
     : process.env.ALERT_USER_ID
@@ -27,6 +28,9 @@ module.exports = {
   // ── Timezone ─────────────────────────────────────────────
   TIMEZONE: process.env.TIMEZONE || 'UTC',
 
+  // ── Logging ─────────────────────────────────────────────
+  LOG_LEVEL: process.env.LOG_LEVEL || 'info',
+
   // ── Power ────────────────────────────────────────────────
   // Base system load in watts — everything RAPL doesn't measure
   // (motherboard, fans, RAM, drives). Adjust for your hardware.
@@ -47,7 +51,10 @@ module.exports = {
   // ── PM2 ──────────────────────────────────────────────────
   PM2_USER: process.env.PM2_USER || '',
 
-  // ── Nginx log paths ──────────────────────────────────────
+  // ── Log paths (auto-detected per distro, override via env) ─
+  AUTH_LOG: process.env.AUTH_LOG || null, // auto: /var/log/auth.log (Debian) or /var/log/secure (RHEL)
+  SYSLOG_PATH: process.env.SYSLOG_PATH || null, // auto: /var/log/syslog (Debian) or /var/log/messages (RHEL)
+  UFW_LOG: process.env.UFW_LOG || null, // auto: /var/log/ufw.log
   NGINX_ACCESS_LOG: process.env.NGINX_ACCESS_LOG || '/var/log/nginx/access.log',
   NGINX_ERROR_LOG: process.env.NGINX_ERROR_LOG || '/var/log/nginx/error.log',
 

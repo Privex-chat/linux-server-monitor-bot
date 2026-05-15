@@ -35,8 +35,11 @@ Discord ←→ index.js (scheduler + command router)
               │
               └── src/utils/
                   ├── exec.js            ← Safe command execution (execFile)
-                  ├── storage.js         ← JSON state persistence
-                  └── logger.js          ← Timestamped console logger
+                  ├── storage.js         ← Atomic JSON state persistence (mutex)
+                  ├── logger.js          ← Structured logging (pino)
+                  ├── alert.js           ← Alert mention builder (user/role/both)
+                  ├── distro.js          ← Linux distro detection + log path mapping
+                  └── logPaths.js        ← Lazy log path resolver (distro + env overrides)
 ```
 
 ## Boot Sequence
@@ -94,7 +97,30 @@ security collector runs every 5 minutes
 - `dailyAccumulator` — samples for daily summary (capped at 1500)
 - `weeklyAccumulator` — daily snapshots for weekly summary
 
-The `updateState(fn)` pattern reads, applies a mutation function, then writes atomically.
+Writes are **atomic** (temp file + `fs.rename`) and serialized through a promise-chain mutex to prevent concurrent corruption. The `updateState(fn)` pattern reads, applies a mutation function, then writes atomically.
+
+## Cross-Distro Support
+
+The bot auto-detects the Linux distribution family by parsing `/etc/os-release`:
+
+| Family    | Examples                     | Auth Log            | Syslog              |
+| --------- | ---------------------------- | ------------------- | ------------------- |
+| `debian`  | Ubuntu, Debian, Mint, Pop!OS | `/var/log/auth.log` | `/var/log/syslog`   |
+| `rhel`    | RHEL, CentOS, Fedora, Alma   | `/var/log/secure`   | `/var/log/messages` |
+| `arch`    | Arch, Manjaro, EndeavourOS   | `/var/log/auth.log` | `/var/log/syslog`   |
+| `suse`    | openSUSE, SLES               | `/var/log/messages` | `/var/log/messages` |
+| `alpine`  | Alpine Linux                 | `/var/log/messages` | `/var/log/messages` |
+| `unknown` | Fallback                     | probes common paths | probes common paths |
+
+All log paths can be overridden via env vars (`AUTH_LOG`, `SYSLOG_PATH`, `UFW_LOG`).
+
+## Logging
+
+Structured logging via **pino** (`pino-pretty` in dev). Log level controlled by `LOG_LEVEL` env var (default: `info`). Pino error-first API: `logger.error(err, 'message')`.
+
+## Alert Mentions
+
+Alerts ping via `ALERT_USER_ID` (`<@id>`), `ALERT_ROLE_ID` (`<@&id>`), or both. At least one must be set — validated at startup.
 
 ## Command Execution Safety
 
@@ -107,7 +133,8 @@ Commands use `safeExec()` which wraps Node's `execFile` (not `exec`) for array a
 5. **Timeouts**: all commands have execution timeouts
 6. **Input validation**: service/process names validated against `[a-zA-Z0-9._-]`
 7. **Error sanitization**: file paths, IPs, tokens stripped from error messages
-8. **Audit logging**: dangerous commands logged to Discord security thread
+8. **Audit logging**: dangerous commands logged to dedicated `logs-commands` thread
+9. **Sudo error detection**: helpful setup message when sudoers not configured
 
 ## Adding a New Collector
 
@@ -117,6 +144,19 @@ Commands use `safeExec()` which wraps Node's `execFile` (not `exec`) for array a
 4. Handle failures gracefully (return defaults, not exceptions)
 5. Call it from the appropriate task in `src/tasks/`
 6. Add embed builder in `src/formatters/embeds.js` if needed
+
+## Testing
+
+Unit tests use **Jest**. Tests live in `tests/` and mock system calls so they run on any platform.
+
+```bash
+npm test              # run all tests
+npm run test:watch    # watch mode
+```
+
+Test suites: `storage.test.js` (state persistence), `distro.test.js` (distro detection), `exec.test.js` (command execution), `commands.test.js` (blocklist, validation, cooldowns).
+
+CI runs on every push/PR via GitHub Actions (Node 18/20/22 matrix): lint → format check → tests.
 
 ## Adding a New Command
 

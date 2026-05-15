@@ -43,13 +43,14 @@ Run `!explain` for a plain-English security breakdown, or `!threats` to see only
  ├── [Thread] logs-pm2
  ├── [Thread] logs-auth
  ├── [Thread] logs-security
+ ├── [Thread] logs-commands   ← audit log for dangerous commands
  ├── [Thread] logs-nginx
  └── [Thread] logs-power
 ```
 
 ## Prerequisites
 
-- **Linux** server (tested on Ubuntu 22.04/24.04, Debian 12)
+- **Linux** server (Debian/Ubuntu, RHEL/CentOS/Fedora, Arch, openSUSE, Alpine — auto-detected)
 - **Node.js** 18+ (`node --version`)
 - **PM2** globally installed (`npm i -g pm2`) — optional but recommended
 - **Docker** installed — optional, only needed for Docker monitoring
@@ -71,7 +72,7 @@ Run `!explain` for a plain-English security breakdown, or `!threats` to see only
 ### 2. Clone and Install
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/linux-server-monitor-bot.git
+git clone https://github.com/Privex-chat/linux-server-monitor-bot.git
 cd linux-server-monitor-bot
 npm install
 ```
@@ -101,12 +102,15 @@ cp .env.example .env
 nano .env  # or your preferred editor
 ```
 
-Set the three required values:
+Set the required values:
 
 ```env
 DISCORD_TOKEN=your_bot_token
 GUILD_ID=your_discord_server_id
+
+# At least one of these must be set:
 ALERT_USER_ID=your_discord_user_id
+ALERT_ROLE_ID=your_discord_role_id
 ```
 
 See [.env.example](.env.example) for all available options.
@@ -115,6 +119,7 @@ See [.env.example](.env.example) for all available options.
 
 - **Guild ID**: Enable Developer Mode in Discord settings, right-click your server name, Copy Server ID
 - **User ID**: Right-click your username, Copy User ID
+- **Role ID**: Server Settings > Roles, right-click the role, Copy Role ID
 
 ### 6. Start
 
@@ -141,8 +146,13 @@ Key settings:
 | ------------------------- | --------------------- | ------------------------------------------------------------ |
 | `DISCORD_TOKEN`           | _required_            | Discord bot token                                            |
 | `GUILD_ID`                | _required_            | Discord server ID                                            |
-| `ALERT_USER_ID`           | _required_            | Discord user ID for alerts                                   |
+| `ALERT_USER_ID`           | _(one required)_      | Discord user ID for alert pings                              |
+| `ALERT_ROLE_ID`           | _(one required)_      | Discord role ID for alert pings                              |
 | `OWNER_IDS`               | same as ALERT_USER_ID | Comma-separated list of users who can run dangerous commands |
+| `LOG_LEVEL`               | `info`                | Pino log level (trace/debug/info/warn/error/fatal)           |
+| `AUTH_LOG`                | _auto-detected_       | Override auth log path (e.g., `/var/log/auth.log`)           |
+| `SYSLOG_PATH`             | _auto-detected_       | Override syslog path (e.g., `/var/log/syslog`)               |
+| `UFW_LOG`                 | _auto-detected_       | Override UFW log path (e.g., `/var/log/ufw.log`)             |
 | `TIMEZONE`                | `UTC`                 | Timezone for timestamps and scheduling                       |
 | `SSH_FAIL_WARN_THRESHOLD` | `10`                  | Failed SSH attempts before warning                           |
 | `SSH_FAIL_CRIT_THRESHOLD` | `50`                  | Failed SSH attempts before critical                          |
@@ -173,8 +183,8 @@ See [COMMANDS.md](COMMANDS.md) for the full reference. Quick overview:
 | -------- | ----------------------------------------------------------------------------- |
 | SECURE   | No issues detected                                                            |
 | ADVISORY | Minor anomalies (low SSH attempts)                                            |
-| WARNING  | Potential threats — pings owner in Discord                                    |
-| CRITICAL | Active threats (crypto miner, rootkit, high-volume brute force) — pings owner |
+| WARNING  | Potential threats — pings alert user/role in Discord                          |
+| CRITICAL | Active threats (crypto miner, rootkit, high-volume brute force) — pings alert |
 
 ## Access Control
 
@@ -210,7 +220,11 @@ Ensure your user is in the docker group: `groups $USER`. Log out and back in aft
 
 ### Bot can't read logs
 
-Re-run `sudo bash scripts/setup-permissions.sh $USER`.
+Re-run `sudo bash scripts/setup-permissions.sh $USER`. The script auto-detects your distro and configures the correct log paths.
+
+### Sudo commands fail with "a terminal is required"
+
+Your bot user needs NOPASSWD sudoers entries. Run `sudo bash scripts/setup-permissions.sh $USER` — it configures all required permissions. See the script output for details.
 
 ### Messages were deleted
 
@@ -218,7 +232,11 @@ The bot auto-recreates deleted placeholder messages and threads on the next upda
 
 ### Bot won't start — "Missing required env vars"
 
-Ensure `DISCORD_TOKEN`, `GUILD_ID`, and `ALERT_USER_ID` are all set in your `.env` file.
+Ensure `DISCORD_TOKEN` and `GUILD_ID` are set in your `.env` file.
+
+### Bot won't start — "At least one of ALERT_USER_ID or ALERT_ROLE_ID must be set"
+
+Set at least one of `ALERT_USER_ID` or `ALERT_ROLE_ID` in `.env`. Both can be set for dual pings.
 
 ## License
 

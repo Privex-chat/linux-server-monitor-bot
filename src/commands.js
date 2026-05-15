@@ -3,6 +3,7 @@ const config = require('../config');
 const logger = require('./utils/logger');
 const { safeExec } = require('./utils/exec');
 const { getState } = require('./utils/storage');
+const logPaths = require('./utils/logPaths');
 
 const PREFIX = '!';
 
@@ -226,21 +227,33 @@ registerCommand('ssh', {
   usage: '!ssh',
   category: 'Security',
   async execute(msg) {
-    const [countResult, ipsResult] = await Promise.all([
-      safeExec('bash', ['-c', "sudo grep -c 'Failed password' /var/log/auth.log 2>/dev/null || echo 0"]),
-      safeExec('bash', ['-c', "sudo grep 'Failed password' /var/log/auth.log 2>/dev/null"]),
-    ]);
+    const authLog = logPaths.resolve().auth || '/dev/null';
 
-    const count = countResult.stdout?.trim() || '0';
+    // Call sudo directly (not via bash) — matches collector pattern
+    const { stdout, stderr, success } = await safeExec('sudo', ['grep', 'Failed password', authLog], {
+      timeout: 15000,
+    });
+
+    let count = '0';
     let ips = 'None';
 
-    if (ipsResult.success && ipsResult.stdout) {
-      const counts = {};
-      for (const line of ipsResult.stdout.split('\n')) {
-        const match = line.match(/from\s+([^\s]+)/);
-        if (match) counts[match[1]] = (counts[match[1]] || 0) + 1;
+    if (!success && stderr && /a password is required|a terminal is required/i.test(stderr)) {
+      return msg.reply(
+        '❌ **sudo requires a password.** Run `scripts/setup-permissions.sh` to configure passwordless sudo for log access.'
+      );
+    }
+
+    if (success && stdout?.trim()) {
+      const lines = stdout.trim().split('\n');
+      count = String(lines.length);
+
+      // Extract IPs from "from <ip>" pattern in log lines
+      const ipCounts = {};
+      for (const line of lines) {
+        const match = line.match(/from\s+([\d.]+)/);
+        if (match) ipCounts[match[1]] = (ipCounts[match[1]] || 0) + 1;
       }
-      const sorted = Object.entries(counts)
+      const sorted = Object.entries(ipCounts)
         .sort((a, b) => b[1] - a[1])
         .slice(0, 15);
       if (sorted.length > 0) {
@@ -489,6 +502,14 @@ async function runWithConfirmation(msg, command, useSudo) {
   const { stdout, stderr, success } = await safeExec(execArgs[0], execArgs[1], {
     timeout: config.COMMAND_TIMEOUT_LONG_MS,
   });
+
+  // Detect sudo password prompt failure
+  if (!success && stderr && /a password is required|a terminal is required/i.test(stderr)) {
+    return confirm.edit(
+      `❌ **sudo requires a password.**\nThe bot's Linux user needs passwordless sudo configured.\nRun \`sudo visudo\` and add:\n\`\`\`\n${config.PM2_USER || 'botuser'} ALL=(ALL) NOPASSWD: ALL\n\`\`\`\nOr use \`scripts/setup-permissions.sh\` for a locked-down config.`
+    );
+  }
+
   const output = (stdout || stderr || '(no output)').substring(0, config.MAX_DISCORD_MSG_LENGTH - 100);
 
   await confirm.edit(`${success ? '✅' : '❌'} \`${prefix}${command.substring(0, 80)}\`\n\`\`\`\n${output}\n\`\`\``);
@@ -553,12 +574,13 @@ registerCommand('logs', {
   usage: '!logs [syslog|auth|nginx|ufw] [lines]',
   category: 'System',
   async execute(msg, args) {
+    const paths = logPaths.resolve();
     const logMap = {
-      syslog: '/var/log/syslog',
-      auth: '/var/log/auth.log',
-      nginx: config.NGINX_ERROR_LOG,
-      'nginx-access': config.NGINX_ACCESS_LOG,
-      ufw: '/var/log/ufw.log',
+      syslog: paths.syslog,
+      auth: paths.auth,
+      nginx: paths.nginxError,
+      'nginx-access': paths.nginxAccess,
+      ufw: paths.ufw,
     };
 
     const logName = args[0]?.toLowerCase() || 'syslog';
@@ -593,6 +615,18 @@ registerCommand('ping', {
   },
 });
 
+// ── CLEAR ───────────────────────────────────────────────
+registerCommand('clear', {
+  description: 'Push chat history off-screen (like terminal clear)',
+  usage: '!clear',
+  aliases: ['cls'],
+  category: 'General',
+  async execute(msg) {
+    const blank = '​\n'.repeat(50);
+    await msg.channel.send(`${blank}**───── ✨ Cleared ─────**`);
+  },
+});
+
 // ── EXPLAIN (beginner-friendly security breakdown) ───────
 registerCommand('explain', {
   description: 'Explain current security status in simple terms',
@@ -602,18 +636,19 @@ registerCommand('explain', {
   cooldown: config.COOLDOWN_HEAVY_MS,
   async execute(msg) {
     const reply = await msg.reply('🔍 Analyzing your server security...');
+    const authLog = logPaths.resolve().auth || '/dev/null';
 
     // Gather all security data
-    const [sshResult, f2bResult, ufwResult, portsResult, procsResult, loginsResult] = await Promise.all([
-      safeExec('bash', ['-c', "sudo grep -c 'Failed password' /var/log/auth.log 2>/dev/null || echo 0"]),
+    const [sshCountResult, f2bResult, ufwResult, portsResult, procsResult, loginsResult] = await Promise.all([
+      safeExec('sudo', ['grep', '-c', 'Failed password', authLog], { timeout: 5000 }),
       safeExec('sudo', ['fail2ban-client', 'status'], { timeout: 5000 }),
       safeExec('sudo', ['ufw', 'status', 'verbose'], { timeout: 5000 }),
       safeExec('ss', ['-tlnp'], { timeout: 5000 }),
       safeExec('ps', ['aux', '--sort=-%cpu', '--no-headers'], { timeout: 5000 }),
-      safeExec('bash', ['-c', "sudo grep 'Failed password' /var/log/auth.log 2>/dev/null"], { timeout: 5000 }),
+      safeExec('sudo', ['grep', 'Failed password', authLog], { timeout: 5000 }),
     ]);
 
-    const sshFails = parseInt(sshResult.stdout?.trim()) || 0;
+    const sshFails = parseInt(sshCountResult.stdout?.trim()) || 0;
     const lines = [];
 
     // ── SSH Section ──
@@ -775,13 +810,14 @@ registerCommand('threats', {
   aliases: ['danger', 'alerts'],
   category: '📖 Explain',
   async execute(msg) {
-    const [sshResult, , procsResult] = await Promise.all([
-      safeExec('bash', ['-c', "sudo grep -c 'Failed password' /var/log/auth.log 2>/dev/null || echo 0"]),
+    const authLog = logPaths.resolve().auth || '/dev/null';
+    const [sshCountResult, , procsResult] = await Promise.all([
+      safeExec('sudo', ['grep', '-c', 'Failed password', authLog], { timeout: 5000 }),
       safeExec('sudo', ['fail2ban-client', 'status', 'sshd'], { timeout: 5000 }),
       safeExec('ps', ['aux', '--sort=-%cpu', '--no-headers'], { timeout: 5000 }),
     ]);
 
-    const sshFails = parseInt(sshResult.stdout?.trim()) || 0;
+    const sshFails = parseInt(sshCountResult.stdout?.trim()) || 0;
     const threats = [];
 
     // SSH brute force
@@ -921,7 +957,8 @@ registerCommand('whois', {
     }
 
     // Check if this IP has attacked us
-    const attackResult = await safeExec('bash', ['-c', `sudo grep -c '${ip}' /var/log/auth.log 2>/dev/null || echo 0`]);
+    const whoisAuthLog = logPaths.resolve().auth || '/dev/null';
+    const attackResult = await safeExec('sudo', ['grep', '-c', ip, whoisAuthLog], { timeout: 5000 });
     const attackCount = parseInt(attackResult.stdout?.trim()) || 0;
     if (attackCount > 0) {
       lines.push(`\n⚔️ **This IP appears ${attackCount} time(s) in your auth log.**`);

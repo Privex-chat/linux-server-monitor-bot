@@ -123,7 +123,7 @@ These commands modify your server. Only users listed in `OWNER_IDS` can run them
 - **Confirmation required**: `!exec`, `!sudo`, and `!reboot` all require typing `yes` within 15 seconds
 - **Rate limiting**: 30-second cooldown between dangerous commands
 - **Command blocklist**: 25 patterns blocked including `rm -rf /`, `mkfs`, `dd`, `curl|bash`, `python -c`, `chmod 777`, `LD_PRELOAD`, and more
-- **Audit logging**: All dangerous commands are logged to the security thread
+- **Audit logging**: All dangerous commands are logged to the `logs-commands` thread
 - **Timeout**: Commands auto-cancel after 30 seconds
 - **Input validation**: Service/process names restricted to `[a-zA-Z0-9._-]`
 
