@@ -211,7 +211,15 @@ async function getSuspiciousProcesses() {
     const pid = parts[1];
     const cpu = parseFloat(parts[2]);
     const mem = parseFloat(parts[3]);
+    const stat = parts[7] || '';
     const command = parts.slice(10).join(' ');
+
+    // Skip zombie/defunct processes (harmless, often caused by monitoring tools)
+    if (stat.includes('Z') || command.includes('<defunct>')) continue;
+
+    // Skip known system utilities (the bot itself spawns these)
+    const safeCommands = [/^\[.*\]$/, /^ps\b/, /^ss\b/, /^grep\b/, /^tail\b/, /^sensors\b/, /^df\b/, /^free\b/, /^last\b/, /^node\b/, /^npm\b/, /^pm2\b/, /^docker\b/];
+    if (safeCommands.some((p) => p.test(command.trim()))) continue;
 
     // Flag crypto miner patterns
     const minerPatterns = [/xmrig/i, /minerd/i, /cpuminer/i, /stratum/i, /nicehash/i, /cryptonight/i];

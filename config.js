@@ -28,7 +28,25 @@ module.exports = {
   // ── Security thresholds ──────────────────────────────────
   SSH_FAIL_WARN_THRESHOLD: 10,
   SSH_FAIL_CRIT_THRESHOLD: 50,
-  EXPECTED_PORTS: [22, 80, 443],
+  EXPECTED_PORTS: [
+    22,    // SSH
+    53,    // DNS
+    80,    // HTTP
+    443,   // HTTPS
+    4330,  // Custom service
+    5432,  // PostgreSQL
+    5433,  // PostgreSQL (alt)
+    6379,  // Redis
+    8000,  // Web app
+    8080,  // Web app
+    8081,  // Web app
+    9090,  // Monitoring / web UI
+    15279, // Custom service
+    20241, // Custom service
+    44321, // Custom service
+    44322, // Custom service
+    44323, // Custom service
+  ],
 
   // ── Watched processes ────────────────────────────────────
   WATCHED_PM2_IDS: [1, 2],
