@@ -49,13 +49,16 @@ async function watchAuthLog() {
     // Handle log rotation (file size smaller than offset)
     const effectiveOffset = fileSize < offset ? 0 : offset;
 
-    const { stdout, success } = await safeExec('bash', [
-      '-c',
-      `sudo tail -c +${effectiveOffset + 1} /var/log/auth.log | head -c 50000`,
-    ], { timeout: 5000 });
+    const { stdout, success } = await safeExec(
+      'bash',
+      ['-c', `sudo tail -c +${effectiveOffset + 1} /var/log/auth.log | head -c 50000`],
+      { timeout: 5000 }
+    );
 
     if (!success || !stdout.trim()) {
-      await updateState((s) => { s.logOffsets.auth = fileSize; });
+      await updateState((s) => {
+        s.logOffsets.auth = fileSize;
+      });
       return;
     }
 
@@ -86,7 +89,7 @@ async function watchAuthLog() {
       // Only keep genuinely important events
       if (/Failed password|Invalid user|BREAK-IN/i.test(l)) return true;
       if (/Accepted password|Accepted publickey/i.test(l)) return true;
-      if (/sudo:/i.test(l)) return true;  // non-bot sudo commands
+      if (/sudo:/i.test(l)) return true; // non-bot sudo commands
       return false;
     });
 
@@ -107,9 +110,13 @@ async function watchAuthLog() {
       const output = deduped.map((line) => {
         const msgPart = line.replace(/^\S+\s+\S+\s+\S+\s+/, '').trim();
         const count = counts.get(msgPart);
-        const prefix = /Failed password|Invalid user|BREAK-IN/i.test(line) ? '🔴'
-          : /Accepted password|Accepted publickey/i.test(line) ? '🟢'
-          : /sudo:/i.test(line) ? '🟡' : '⚪';
+        const prefix = /Failed password|Invalid user|BREAK-IN/i.test(line)
+          ? '🔴'
+          : /Accepted password|Accepted publickey/i.test(line)
+            ? '🟢'
+            : /sudo:/i.test(line)
+              ? '🟡'
+              : '⚪';
         return count > 1 ? `${prefix} ${line} [×${count}]` : `${prefix} ${line}`;
       });
 
@@ -121,13 +128,17 @@ async function watchAuthLog() {
       // Alert on high volume of failures
       const failCount = importantLines.filter((l) => /Failed password|Invalid user/i.test(l)).length;
       if (failCount >= 5) {
-        await thread.send(`⚠️ <@${config.ALERT_USER_ID}> **${failCount} failed auth attempts** detected in recent log batch.`);
+        await thread.send(
+          `⚠️ <@${config.ALERT_USER_ID}> **${failCount} failed auth attempts** detected in recent log batch.`
+        );
       }
     }
 
-    await updateState((s) => { s.logOffsets.auth = fileSize; });
+    await updateState((s) => {
+      s.logOffsets.auth = fileSize;
+    });
   } catch (err) {
-    logger.error('Auth log watch error:', err.message);
+    logger.error(`Auth log watch error: ${err.message}`);
   }
 }
 
@@ -154,13 +165,16 @@ async function watchSyslog() {
 
     const effectiveOffset = fileSize < offset ? 0 : offset;
 
-    const { stdout, success } = await safeExec('bash', [
-      '-c',
-      `sudo tail -c +${effectiveOffset + 1} /var/log/syslog | head -c 50000`,
-    ], { timeout: 5000 });
+    const { stdout, success } = await safeExec(
+      'bash',
+      ['-c', `sudo tail -c +${effectiveOffset + 1} /var/log/syslog | head -c 50000`],
+      { timeout: 5000 }
+    );
 
     if (!success || !stdout.trim()) {
-      await updateState((s) => { s.logOffsets.syslog = fileSize; });
+      await updateState((s) => {
+        s.logOffsets.syslog = fileSize;
+      });
       return;
     }
 
@@ -168,15 +182,15 @@ async function watchSyslog() {
 
     // Skip known noisy/spammy services
     const noisyServices = [
-      /cloudflared\[/,       // Broken tunnel retries
-      /snapd\[/,             // Snap auto-updates
-      /systemd-resolved\[/,  // DNS resolver chatter
+      /cloudflared\[/, // Broken tunnel retries
+      /snapd\[/, // Snap auto-updates
+      /systemd-resolved\[/, // DNS resolver chatter
       /networkd-dispatcher\[/, // Network state changes
     ];
 
     // Only surface errors, warnings, critical events (excluding noise)
     const important = lines.filter((l) => {
-      if (!(/error|fail|critical|panic|oom|killed|segfault|out of memory/i.test(l))) return false;
+      if (!/error|fail|critical|panic|oom|killed|segfault|out of memory/i.test(l)) return false;
       if (noisyServices.some((p) => p.test(l))) return false;
       return true;
     });
@@ -188,9 +202,9 @@ async function watchSyslog() {
       for (const line of important) {
         // Strip syslog timestamp AND any embedded ISO/epoch timestamps for comparison
         const msgPart = line
-          .replace(/^\S+\s+\S+\s+\S+\s+/, '')  // syslog timestamp + hostname
-          .replace(/\d{4}-\d{2}-\d{2}T[\d:.Z+-]+/g, '')  // embedded ISO timestamps
-          .replace(/\d{10,}/g, '')  // epoch timestamps
+          .replace(/^\S+\s+\S+\s+\S+\s+/, '') // syslog timestamp + hostname
+          .replace(/\d{4}-\d{2}-\d{2}T[\d:.Z+-]+/g, '') // embedded ISO timestamps
+          .replace(/\d{10,}/g, '') // epoch timestamps
           .trim();
         if (counts.has(msgPart)) {
           counts.set(msgPart, counts.get(msgPart) + 1);
@@ -212,9 +226,11 @@ async function watchSyslog() {
       }
     }
 
-    await updateState((s) => { s.logOffsets.syslog = fileSize; });
+    await updateState((s) => {
+      s.logOffsets.syslog = fileSize;
+    });
   } catch (err) {
-    logger.error('Syslog watch error:', err.message);
+    logger.error(`Syslog watch error: ${err.message}`);
   }
 }
 
@@ -234,10 +250,11 @@ async function watchNginxLogs() {
 
       if (stat.size > offset) {
         const effectiveOffset = stat.size < offset ? 0 : offset;
-        const { stdout, success } = await safeExec('bash', [
-          '-c',
-          `sudo tail -c +${effectiveOffset + 1} ${config.NGINX_ERROR_LOG} | head -c 30000`,
-        ], { timeout: 5000 });
+        const { stdout, success } = await safeExec(
+          'bash',
+          ['-c', `sudo tail -c +${effectiveOffset + 1} ${config.NGINX_ERROR_LOG} | head -c 30000`],
+          { timeout: 5000 }
+        );
 
         if (success && stdout.trim()) {
           const lines = stdout.trim().split('\n').filter(Boolean);
@@ -251,9 +268,13 @@ async function watchNginxLogs() {
             }
           }
         }
-        await updateState((s) => { s.logOffsets.nginx_error = stat.size; });
+        await updateState((s) => {
+          s.logOffsets.nginx_error = stat.size;
+        });
       }
-    } catch { /* file doesn't exist */ }
+    } catch {
+      /* file doesn't exist */
+    }
 
     // Access log — only flag attack patterns
     try {
@@ -262,10 +283,11 @@ async function watchNginxLogs() {
 
       if (stat.size > offset) {
         const effectiveOffset = stat.size < offset ? 0 : offset;
-        const { stdout, success } = await safeExec('bash', [
-          '-c',
-          `sudo tail -c +${effectiveOffset + 1} ${config.NGINX_ACCESS_LOG} | head -c 50000`,
-        ], { timeout: 5000 });
+        const { stdout, success } = await safeExec(
+          'bash',
+          ['-c', `sudo tail -c +${effectiveOffset + 1} ${config.NGINX_ACCESS_LOG} | head -c 50000`],
+          { timeout: 5000 }
+        );
 
         if (success && stdout.trim()) {
           const attackPatterns = [
@@ -286,11 +308,15 @@ async function watchNginxLogs() {
             );
           }
         }
-        await updateState((s) => { s.logOffsets.nginx_access = stat.size; });
+        await updateState((s) => {
+          s.logOffsets.nginx_access = stat.size;
+        });
       }
-    } catch { /* file doesn't exist */ }
+    } catch {
+      /* file doesn't exist */
+    }
   } catch (err) {
-    logger.error('Nginx log watch error:', err.message);
+    logger.error(`Nginx log watch error: ${err.message}`);
   }
 }
 
@@ -343,7 +369,7 @@ async function watchPm2Events() {
 
     previousPm2States = currentStates;
   } catch (err) {
-    logger.error('PM2 event watch error:', err.message);
+    logger.error(`PM2 event watch error: ${err.message}`);
   }
 }
 
@@ -354,11 +380,7 @@ async function watchDockerEvents() {
   if (!thread) return;
 
   try {
-    const { stdout, success } = await safeExec(
-      'docker',
-      ['ps', '-a', '--format', '{{json .}}'],
-      { timeout: 10000 }
-    );
+    const { stdout, success } = await safeExec('docker', ['ps', '-a', '--format', '{{json .}}'], { timeout: 10000 });
     if (!success) return;
 
     const lines = stdout.trim().split('\n').filter(Boolean);
@@ -386,12 +408,14 @@ async function watchDockerEvents() {
 
           await thread.send(msg);
         }
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     }
 
     previousDockerStates = currentStates;
   } catch (err) {
-    logger.error('Docker event watch error:', err.message);
+    logger.error(`Docker event watch error: ${err.message}`);
   }
 }
 
@@ -418,10 +442,11 @@ async function watchUfwLog() {
 
     const effectiveOffset = fileSize < offset ? 0 : offset;
 
-    const { stdout, success } = await safeExec('bash', [
-      '-c',
-      `sudo tail -c +${effectiveOffset + 1} ${logPath} | head -c 30000`,
-    ], { timeout: 5000 });
+    const { stdout, success } = await safeExec(
+      'bash',
+      ['-c', `sudo tail -c +${effectiveOffset + 1} ${logPath} | head -c 30000`],
+      { timeout: 5000 }
+    );
 
     if (success && stdout.trim()) {
       const lines = stdout.trim().split('\n');
@@ -429,18 +454,16 @@ async function watchUfwLog() {
 
       // Filter out routine LAN noise
       const lanNoisePatterns = [
-        /DST=224\./,                    // Multicast
-        /DST=255\.255\.255\.255/,       // Broadcast
-        /PROTO=2\b/,                    // IGMP
-        /PROTO=ICMPv6 TYPE=13[35]/,     // IPv6 Neighbor Solicitation/Advertisement
-        /PROTO=ICMPv6 TYPE=134/,        // IPv6 Router Advertisement
-        /DPT=7\b/,                      // UDP echo (router health check)
-        /SRC=fe80:/i,                   // IPv6 link-local
+        /DST=224\./, // Multicast
+        /DST=255\.255\.255\.255/, // Broadcast
+        /PROTO=2\b/, // IGMP
+        /PROTO=ICMPv6 TYPE=13[35]/, // IPv6 Neighbor Solicitation/Advertisement
+        /PROTO=ICMPv6 TYPE=134/, // IPv6 Router Advertisement
+        /DPT=7\b/, // UDP echo (router health check)
+        /SRC=fe80:/i, // IPv6 link-local
       ];
 
-      const blocks = allBlocks.filter(
-        (l) => !lanNoisePatterns.some((p) => p.test(l))
-      );
+      const blocks = allBlocks.filter((l) => !lanNoisePatterns.some((p) => p.test(l)));
 
       if (blocks.length > 20) {
         await thread.send(
@@ -453,9 +476,11 @@ async function watchUfwLog() {
       }
     }
 
-    await updateState((s) => { s.logOffsets.ufw = fileSize; });
+    await updateState((s) => {
+      s.logOffsets.ufw = fileSize;
+    });
   } catch (err) {
-    logger.error('UFW log watch error:', err.message);
+    logger.error(`UFW log watch error: ${err.message}`);
   }
 }
 

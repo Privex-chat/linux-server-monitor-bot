@@ -1,6 +1,5 @@
-const { safeExec, readProcFile } = require('../utils/exec');
+const { safeExec } = require('../utils/exec');
 const config = require('../../config');
-const logger = require('../utils/logger');
 const fs = require('fs').promises;
 
 async function getSecurityStatus() {
@@ -60,12 +59,9 @@ async function getSSHInfo() {
   const result = { failedCount: 0, failedIPs: [], recentAttempts: [], available: false };
 
   // Count failed attempts in last 24h from auth.log
-  const { stdout, success } = await safeExec('sudo', [
-    'grep',
-    '-c',
-    'Failed password',
-    '/var/log/auth.log',
-  ], { timeout: 5000 });
+  const { stdout, success } = await safeExec('sudo', ['grep', '-c', 'Failed password', '/var/log/auth.log'], {
+    timeout: 5000,
+  });
 
   if (success) {
     result.available = true;
@@ -73,10 +69,14 @@ async function getSSHInfo() {
   }
 
   // Get unique IPs with failed attempts
-  const ipResult = await safeExec('bash', [
-    '-c',
-    "sudo grep 'Failed password' /var/log/auth.log | grep -oP 'from \\\\K[^ ]+' | sort | uniq -c | sort -rn | head -10",
-  ], { timeout: 5000 });
+  const ipResult = await safeExec(
+    'bash',
+    [
+      '-c',
+      "sudo grep 'Failed password' /var/log/auth.log | grep -oP 'from \\\\K[^ ]+' | sort | uniq -c | sort -rn | head -10",
+    ],
+    { timeout: 5000 }
+  );
 
   if (ipResult.success) {
     const lines = ipResult.stdout.trim().split('\n').filter(Boolean);
@@ -89,10 +89,9 @@ async function getSSHInfo() {
   }
 
   // Recent failed attempts (last 5)
-  const recentResult = await safeExec('bash', [
-    '-c',
-    "sudo grep 'Failed password' /var/log/auth.log | tail -5",
-  ], { timeout: 5000 });
+  const recentResult = await safeExec('bash', ['-c', "sudo grep 'Failed password' /var/log/auth.log | tail -5"], {
+    timeout: 5000,
+  });
 
   if (recentResult.success) {
     result.recentAttempts = recentResult.stdout.trim().split('\n').filter(Boolean);
@@ -112,7 +111,10 @@ async function getFail2banInfo() {
   const jailMatch = stdout.match(/Jail list:\s*(.*)/);
   if (!jailMatch) return result;
 
-  const jailNames = jailMatch[1].split(',').map((j) => j.trim()).filter(Boolean);
+  const jailNames = jailMatch[1]
+    .split(',')
+    .map((j) => j.trim())
+    .filter(Boolean);
 
   for (const jail of jailNames) {
     const jailResult = await safeExec('sudo', ['fail2ban-client', 'status', jail], { timeout: 5000 });
@@ -160,10 +162,11 @@ async function getUfwInfo() {
   }
 
   // Count blocked connections from UFW log
-  const blockResult = await safeExec('bash', [
-    '-c',
-    "sudo grep -c '\\[UFW BLOCK\\]' /var/log/ufw.log 2>/dev/null || echo 0",
-  ], { timeout: 5000 });
+  const blockResult = await safeExec(
+    'bash',
+    ['-c', "sudo grep -c '\\[UFW BLOCK\\]' /var/log/ufw.log 2>/dev/null || echo 0"],
+    { timeout: 5000 }
+  );
   if (blockResult.success) {
     result.blockedCount = parseInt(blockResult.stdout.trim()) || 0;
   }
@@ -218,7 +221,21 @@ async function getSuspiciousProcesses() {
     if (stat.includes('Z') || command.includes('<defunct>')) continue;
 
     // Skip known system utilities (the bot itself spawns these)
-    const safeCommands = [/^\[.*\]$/, /^ps\b/, /^ss\b/, /^grep\b/, /^tail\b/, /^sensors\b/, /^df\b/, /^free\b/, /^last\b/, /^node\b/, /^npm\b/, /^pm2\b/, /^docker\b/];
+    const safeCommands = [
+      /^\[.*\]$/,
+      /^ps\b/,
+      /^ss\b/,
+      /^grep\b/,
+      /^tail\b/,
+      /^sensors\b/,
+      /^df\b/,
+      /^free\b/,
+      /^last\b/,
+      /^node\b/,
+      /^npm\b/,
+      /^pm2\b/,
+      /^docker\b/,
+    ];
     if (safeCommands.some((p) => p.test(command.trim()))) continue;
 
     // Flag crypto miner patterns
@@ -237,14 +254,22 @@ async function getSuspiciousProcesses() {
   }
 
   // Check for deleted executables (common malware indicator)
-  const deletedResult = await safeExec('bash', [
-    '-c',
-    "sudo ls -la /proc/*/exe 2>/dev/null | grep '(deleted)' | head -5",
-  ], { timeout: 5000 });
+  const deletedResult = await safeExec(
+    'bash',
+    ['-c', "sudo ls -la /proc/*/exe 2>/dev/null | grep '(deleted)' | head -5"],
+    { timeout: 5000 }
+  );
   if (deletedResult.success && deletedResult.stdout.trim()) {
     const dLines = deletedResult.stdout.trim().split('\n');
     for (const dl of dLines) {
-      suspicious.push({ pid: 'N/A', user: 'N/A', cpu: 0, mem: 0, command: dl.trim().substring(0, 100), reason: 'Deleted executable running' });
+      suspicious.push({
+        pid: 'N/A',
+        user: 'N/A',
+        cpu: 0,
+        mem: 0,
+        command: dl.trim().substring(0, 100),
+        reason: 'Deleted executable running',
+      });
     }
   }
 
@@ -256,12 +281,20 @@ async function getLastLogins() {
 
   const { stdout: lastOut, success: lastSuccess } = await safeExec('last', ['-n', '10', '-i'], { timeout: 5000 });
   if (lastSuccess) {
-    result.successful = lastOut.trim().split('\n').filter((l) => l.trim() && !l.startsWith('wtmp'));
+    result.successful = lastOut
+      .trim()
+      .split('\n')
+      .filter((l) => l.trim() && !l.startsWith('wtmp'));
   }
 
-  const { stdout: lastbOut, success: lastbSuccess } = await safeExec('sudo', ['lastb', '-n', '10', '-i'], { timeout: 5000 });
+  const { stdout: lastbOut, success: lastbSuccess } = await safeExec('sudo', ['lastb', '-n', '10', '-i'], {
+    timeout: 5000,
+  });
   if (lastbSuccess) {
-    result.failed = lastbOut.trim().split('\n').filter((l) => l.trim() && !l.startsWith('btmp'));
+    result.failed = lastbOut
+      .trim()
+      .split('\n')
+      .filter((l) => l.trim() && !l.startsWith('btmp'));
   }
 
   return result;
@@ -276,11 +309,7 @@ async function getRootkitStatus() {
     result.lastScan = stat.mtime.toISOString();
     result.available = true;
 
-    const { stdout, success } = await safeExec('sudo', [
-      'tail',
-      '-50',
-      '/var/log/rkhunter.log',
-    ], { timeout: 5000 });
+    const { stdout, success } = await safeExec('sudo', ['tail', '-50', '/var/log/rkhunter.log'], { timeout: 5000 });
 
     if (success) {
       const warningMatch = stdout.match(/warnings found:\s*(\d+)/i);
@@ -288,7 +317,11 @@ async function getRootkitStatus() {
       if (stdout.toLowerCase().includes('rootkit') && stdout.toLowerCase().includes('found')) {
         result.infected = true;
       }
-      result.summary = stdout.split('\n').filter((l) => l.includes('Warning') || l.includes('Rootkit')).slice(0, 5).join('\n');
+      result.summary = stdout
+        .split('\n')
+        .filter((l) => l.includes('Warning') || l.includes('Rootkit'))
+        .slice(0, 5)
+        .join('\n');
     }
   } catch {
     /* rkhunter not installed or no log */
@@ -332,10 +365,11 @@ async function getAuthLogEntries(sinceOffset = 0) {
     const stat = await fs.stat('/var/log/auth.log');
     if (stat.size <= sinceOffset) return { entries: [], newOffset: sinceOffset };
 
-    const { stdout, success } = await safeExec('bash', [
-      '-c',
-      `sudo tail -c +${sinceOffset + 1} /var/log/auth.log | head -c 50000`,
-    ], { timeout: 5000 });
+    const { stdout, success } = await safeExec(
+      'bash',
+      ['-c', `sudo tail -c +${sinceOffset + 1} /var/log/auth.log | head -c 50000`],
+      { timeout: 5000 }
+    );
 
     if (!success) return { entries: [], newOffset: sinceOffset };
 

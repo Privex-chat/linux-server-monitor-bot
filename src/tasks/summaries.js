@@ -66,7 +66,7 @@ async function runDaily() {
 
     logger.info('Daily summary generated.');
   } catch (err) {
-    logger.error('Daily summary error:', err.message);
+    logger.error(`Daily summary error: ${err.message}`);
   }
 }
 
@@ -100,7 +100,7 @@ async function runWeekly() {
 
     logger.info('Weekly summary generated.');
   } catch (err) {
-    logger.error('Weekly summary error:', err.message);
+    logger.error(`Weekly summary error: ${err.message}`);
   }
 }
 

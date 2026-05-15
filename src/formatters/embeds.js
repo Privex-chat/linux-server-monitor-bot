@@ -28,16 +28,18 @@ function formatUptime(ms) {
   return parts.join(' ');
 }
 
-function istNow() {
-  return new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
+function localNow() {
+  return new Date().toLocaleString('en-US', { timeZone: config.TIMEZONE, hour12: false });
 }
+
+// Keep old name as alias for compatibility
+const istNow = localNow;
 
 // ── Live Stats Embed ─────────────────────────────────────
 
 function buildLiveStatsEmbed(system, temps, power) {
   const cpu = system.cpu;
   const mem = system.memory;
-  const net = system.network.interfaces[0] || { rxSpeed: 0, txSpeed: 0, name: 'N/A' };
 
   const cpuBar = progressBar(cpu.total);
   const memPercent = mem.total > 0 ? (mem.used / mem.total) * 100 : 0;
@@ -74,7 +76,7 @@ function buildLiveStatsEmbed(system, temps, power) {
   const embed = new EmbedBuilder()
     .setTitle('📡  LIVE SERVER STATS')
     .setColor(config.COLORS.CYAN)
-    .setDescription(`Last updated: \`${istNow()} IST\``)
+    .setDescription(`Last updated: \`${localNow()}\``)
     .addFields(
       {
         name: '🖥️ CPU',
@@ -206,7 +208,10 @@ function buildSecurityEmbed(sec) {
   // SSH
   lines.push(`🔐 **SSH:** ${sec.ssh.failedCount} failed attempts`);
   if (sec.ssh.failedIPs.length > 0) {
-    const topIPs = sec.ssh.failedIPs.slice(0, 3).map((i) => `\`${i.ip}\` (${i.count}x)`).join(', ');
+    const topIPs = sec.ssh.failedIPs
+      .slice(0, 3)
+      .map((i) => `\`${i.ip}\` (${i.count}x)`)
+      .join(', ');
     lines.push(`   Top IPs: ${topIPs}`);
   }
 
@@ -261,7 +266,12 @@ function buildSecurityEmbed(sec) {
     lines.push('🦠 **ClamAV:** Not installed');
   }
 
-  const colorMap = { SECURE: config.COLORS.GREEN, ADVISORY: config.COLORS.YELLOW, WARNING: config.COLORS.ORANGE, CRITICAL: config.COLORS.RED };
+  const colorMap = {
+    SECURE: config.COLORS.GREEN,
+    ADVISORY: config.COLORS.YELLOW,
+    WARNING: config.COLORS.ORANGE,
+    CRITICAL: config.COLORS.RED,
+  };
 
   return new EmbedBuilder()
     .setTitle('🛡️  SECURITY STATUS')
@@ -276,7 +286,7 @@ function buildSecurityEmbed(sec) {
 function buildDailySummaryEmbed(data) {
   const lines = [];
 
-  lines.push(`📅 **Date:** ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}`);
+  lines.push(`📅 **Date:** ${new Date().toLocaleDateString('en-US', { timeZone: config.TIMEZONE })}`);
   lines.push('');
 
   if (data.cpuSamples.length > 0) {
@@ -308,7 +318,7 @@ function buildDailySummaryEmbed(data) {
     .setTitle('📊  DAILY SUMMARY')
     .setColor(config.COLORS.BLUE)
     .setDescription(lines.join('\n'))
-    .setFooter({ text: 'Generated at midnight IST' })
+    .setFooter({ text: `Generated at ${localNow()}` })
     .setTimestamp();
 }
 
@@ -317,7 +327,9 @@ function buildDailySummaryEmbed(data) {
 function buildWeeklySummaryEmbed(data) {
   const lines = [];
 
-  lines.push(`📆 **Week of:** ${data.startTime ? new Date(data.startTime).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) : 'N/A'}`);
+  lines.push(
+    `📆 **Week of:** ${data.startTime ? new Date(data.startTime).toLocaleDateString('en-US', { timeZone: config.TIMEZONE }) : 'N/A'}`
+  );
   lines.push(`📊 **Days tracked:** ${data.dailySummaries.length}`);
   lines.push('');
 
@@ -360,7 +372,7 @@ function buildWeeklySummaryEmbed(data) {
     .setTitle('📈  WEEKLY SUMMARY')
     .setColor(config.COLORS.PURPLE)
     .setDescription(lines.join('\n') || 'No data collected yet.')
-    .setFooter({ text: 'Generated Sunday midnight IST' })
+    .setFooter({ text: `Generated at ${localNow()}` })
     .setTimestamp();
 }
 
@@ -374,5 +386,6 @@ module.exports = {
   progressBar,
   formatBytes,
   formatUptime,
+  localNow,
   istNow,
 };

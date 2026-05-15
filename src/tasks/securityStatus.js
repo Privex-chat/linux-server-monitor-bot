@@ -48,7 +48,7 @@ async function run() {
 
     logger.debug('Security status updated.');
   } catch (err) {
-    logger.error('Security update error:', err.message);
+    logger.error(`Security update error: ${err.message}`);
   }
 }
 

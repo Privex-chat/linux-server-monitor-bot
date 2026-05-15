@@ -27,10 +27,11 @@ async function getNginxStatus() {
     result.accessAvailable = true;
 
     // Recent status code distribution (last 1000 lines)
-    const { stdout: accessOut, success: accessOk } = await safeExec('bash', [
-      '-c',
-      `sudo tail -1000 ${config.NGINX_ACCESS_LOG} 2>/dev/null`,
-    ], { timeout: 5000 });
+    const { stdout: accessOut, success: accessOk } = await safeExec(
+      'bash',
+      ['-c', `sudo tail -1000 ${config.NGINX_ACCESS_LOG} 2>/dev/null`],
+      { timeout: 5000 }
+    );
 
     if (accessOk && accessOut.trim()) {
       const lines = accessOut.trim().split('\n');
@@ -61,10 +62,11 @@ async function getNginxStatus() {
       }
 
       // Top IPs (from recent 4xx/5xx)
-      const ipResult = await safeExec('bash', [
-        '-c',
-        `sudo tail -1000 ${config.NGINX_ACCESS_LOG} | awk '{print $1}' | sort | uniq -c | sort -rn | head -10`,
-      ], { timeout: 5000 });
+      const ipResult = await safeExec(
+        'bash',
+        ['-c', `sudo tail -1000 ${config.NGINX_ACCESS_LOG} | awk '{print $1}' | sort | uniq -c | sort -rn | head -10`],
+        { timeout: 5000 }
+      );
 
       if (ipResult.success) {
         const ipLines = ipResult.stdout.trim().split('\n').filter(Boolean);
@@ -85,10 +87,11 @@ async function getNginxStatus() {
     await fs.access(config.NGINX_ERROR_LOG);
     result.errorAvailable = true;
 
-    const { stdout: errOut, success: errOk } = await safeExec('bash', [
-      '-c',
-      `sudo tail -20 ${config.NGINX_ERROR_LOG} 2>/dev/null`,
-    ], { timeout: 5000 });
+    const { stdout: errOut, success: errOk } = await safeExec(
+      'bash',
+      ['-c', `sudo tail -20 ${config.NGINX_ERROR_LOG} 2>/dev/null`],
+      { timeout: 5000 }
+    );
 
     if (errOk && errOut.trim()) {
       result.recentErrors = errOut
@@ -114,10 +117,11 @@ async function getNginxLogEntries(logType, sinceOffset = 0) {
     const stat = await fs.stat(logPath);
     if (stat.size <= sinceOffset) return { entries: [], newOffset: sinceOffset };
 
-    const { stdout, success } = await safeExec('bash', [
-      '-c',
-      `sudo tail -c +${sinceOffset + 1} ${logPath} | head -c 50000`,
-    ], { timeout: 5000 });
+    const { stdout, success } = await safeExec(
+      'bash',
+      ['-c', `sudo tail -c +${sinceOffset + 1} ${logPath} | head -c 50000`],
+      { timeout: 5000 }
+    );
 
     if (!success) return { entries: [], newOffset: sinceOffset };
 

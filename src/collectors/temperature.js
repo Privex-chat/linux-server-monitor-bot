@@ -1,5 +1,4 @@
 const { safeExec } = require('../utils/exec');
-const logger = require('../utils/logger');
 
 async function getTemperatures() {
   const result = {
@@ -21,7 +20,7 @@ async function getTemperatures() {
         for (const [label, values] of Object.entries(sensors)) {
           if (typeof values !== 'object' || values === null) continue;
 
-          for (const [key, val] of Object.entries(values)) {
+          for (const [, val] of Object.entries(values)) {
             if (typeof val !== 'object' || val === null) continue;
 
             for (const [subKey, temp] of Object.entries(val)) {

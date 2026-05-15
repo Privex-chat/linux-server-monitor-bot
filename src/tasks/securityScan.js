@@ -62,9 +62,9 @@ async function runClamAVScan() {
   const scanPaths = ['/tmp', '/var/tmp', `/home/${config.PM2_USER}`];
   const scanPath = scanPaths.join(' ');
 
-  const { stdout, success } = await safeExec(
+  const { stdout } = await safeExec(
     'bash',
-    ['-c', `clamscan -r --no-summary --infected ${scanPath} 2>/dev/null; echo "---CLAM_EXIT:$?"` ],
+    ['-c', `clamscan -r --no-summary --infected ${scanPath} 2>/dev/null; echo "---CLAM_EXIT:$?"`],
     { timeout: 600000 } // 10 min timeout
   );
 

@@ -33,7 +33,7 @@ async function getPm2Status() {
       if (info.watched) result.watched.push(info);
     }
   } catch (e) {
-    logger.error('Failed to parse PM2 output:', e.message);
+    logger.error(`Failed to parse PM2 output: ${e.message}`);
   }
 
   return result;

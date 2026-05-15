@@ -1,6 +1,5 @@
 const { safeExec } = require('../utils/exec');
 const config = require('../../config');
-const logger = require('../utils/logger');
 
 async function getDockerStatus() {
   const result = {
@@ -9,11 +8,7 @@ async function getDockerStatus() {
     watched: [],
   };
 
-  const { stdout, success } = await safeExec(
-    'docker',
-    ['ps', '-a', '--format', '{{json .}}'],
-    { timeout: 15000 }
-  );
+  const { stdout, success } = await safeExec('docker', ['ps', '-a', '--format', '{{json .}}'], { timeout: 15000 });
   if (!success) return result;
 
   result.available = true;
@@ -45,19 +40,13 @@ async function getDockerStatus() {
   }
 
   // Resource usage for running containers
-  const statsResult = await safeExec(
-    'docker',
-    ['stats', '--no-stream', '--format', '{{json .}}'],
-    { timeout: 15000 }
-  );
+  const statsResult = await safeExec('docker', ['stats', '--no-stream', '--format', '{{json .}}'], { timeout: 15000 });
   if (statsResult.success) {
     const statsLines = statsResult.stdout.trim().split('\n').filter(Boolean);
     for (const sl of statsLines) {
       try {
         const s = JSON.parse(sl);
-        const container = result.containers.find(
-          (c) => c.id === s.ID || c.name === s.Name
-        );
+        const container = result.containers.find((c) => c.id === s.ID || c.name === s.Name);
         if (container) {
           container.cpuPercent = s.CPUPerc;
           container.memUsage = s.MemUsage;
@@ -75,11 +64,9 @@ async function getDockerStatus() {
 }
 
 async function getDockerLogs(containerIdOrName, lines = 30) {
-  const { stdout, success } = await safeExec(
-    'docker',
-    ['logs', '--tail', String(lines), containerIdOrName],
-    { timeout: 10000 }
-  );
+  const { stdout, success } = await safeExec('docker', ['logs', '--tail', String(lines), containerIdOrName], {
+    timeout: 10000,
+  });
   return success ? stdout.trim() : '';
 }
 

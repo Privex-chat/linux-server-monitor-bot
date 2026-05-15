@@ -3,7 +3,6 @@ const tempCollector = require('../collectors/temperature');
 const powerCollector = require('../collectors/power');
 const pm2Collector = require('../collectors/pm2');
 const dockerCollector = require('../collectors/docker');
-const securityCollector = require('../collectors/security');
 const embeds = require('../formatters/embeds');
 const { updateState, getState } = require('../utils/storage');
 const logger = require('../utils/logger');
@@ -47,9 +46,7 @@ async function run() {
 
       s.dailyAccumulator.cpuSamples.push(system.cpu.total);
 
-      const memPct = system.memory.total > 0
-        ? (system.memory.used / system.memory.total) * 100
-        : 0;
+      const memPct = system.memory.total > 0 ? (system.memory.used / system.memory.total) * 100 : 0;
       s.dailyAccumulator.ramSamples.push(Math.round(memPct * 10) / 10);
 
       if (power.available) {
@@ -84,7 +81,7 @@ async function run() {
 
     logger.debug('Live stats updated.');
   } catch (err) {
-    logger.error('Live stats error:', err.message);
+    logger.error(`Live stats error: ${err.message}`);
   }
 }
 
@@ -94,7 +91,7 @@ async function editMessage(channel, messageId, embed) {
     const msg = await channel.messages.fetch(messageId);
     await msg.edit({ content: null, embeds: [embed] });
   } catch (err) {
-    logger.warn(`Failed to edit message ${messageId}:`, err.message);
+    logger.warn(`Failed to edit message ${messageId}: ${err.message}`);
   }
 }
 

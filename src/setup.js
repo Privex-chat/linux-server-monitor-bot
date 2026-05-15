@@ -1,4 +1,4 @@
-const { ChannelType, PermissionFlagsBits } = require('discord.js');
+const { ChannelType } = require('discord.js');
 const config = require('../config');
 const { updateState, getState } = require('./utils/storage');
 const logger = require('./utils/logger');
@@ -42,9 +42,7 @@ async function ensureSetup(guild) {
   }
 
   if (!channel) {
-    channel = guild.channels.cache.find(
-      (ch) => ch.name === config.CHANNEL_NAME && ch.type === ChannelType.GuildText
-    );
+    channel = guild.channels.cache.find((ch) => ch.name === config.CHANNEL_NAME && ch.type === ChannelType.GuildText);
   }
 
   if (!channel) {
@@ -117,10 +115,7 @@ async function ensureSetup(guild) {
 
     if (!thread) {
       // Search by name in active and archived
-      thread =
-        activeThreads.find((t) => t.name === name) ||
-        archivedThreads.find((t) => t.name === name) ||
-        null;
+      thread = activeThreads.find((t) => t.name === name) || archivedThreads.find((t) => t.name === name) || null;
 
       if (thread && thread.archived) {
         await thread.setArchived(false);
@@ -177,15 +172,17 @@ async function ensureSetup(guild) {
     s.sudoRoleId = sudoRole.id;
   });
 
-  // Auto-assign the role to the alert user if they don't have it
-  try {
-    const alertMember = await guild.members.fetch(config.ALERT_USER_ID);
-    if (alertMember && !alertMember.roles.cache.has(sudoRole.id)) {
-      await alertMember.roles.add(sudoRole);
-      logger.info(`Auto-assigned @${SUDO_ROLE_NAME} role to alert user.`);
+  // Auto-assign the role to all owners
+  for (const ownerId of config.OWNER_IDS) {
+    try {
+      const member = await guild.members.fetch(ownerId);
+      if (member && !member.roles.cache.has(sudoRole.id)) {
+        await member.roles.add(sudoRole);
+        logger.info(`Auto-assigned @${SUDO_ROLE_NAME} role to owner ${member.user.tag}.`);
+      }
+    } catch (err) {
+      logger.warn(`Could not auto-assign sudo role to owner ${ownerId}: %s`, err.message);
     }
-  } catch (err) {
-    logger.warn(`Could not auto-assign sudo role to alert user: ${err.message}`);
   }
 
   logger.info('Setup complete. Channel, messages, threads, and role verified.');

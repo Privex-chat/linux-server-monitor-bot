@@ -49,9 +49,7 @@ async function getCpuUsage() {
   prevCpuInfo = current;
 
   const loadResult = await readProcFile('/proc/loadavg');
-  const loadAvg = loadResult.success
-    ? loadResult.content.trim().split(/\s+/).slice(0, 3).join(' / ')
-    : 'N/A';
+  const loadAvg = loadResult.success ? loadResult.content.trim().split(/\s+/).slice(0, 3).join(' / ') : 'N/A';
 
   return { total: Math.round(totalUsage * 10) / 10, cores: coreUsages, loadAvg };
 }

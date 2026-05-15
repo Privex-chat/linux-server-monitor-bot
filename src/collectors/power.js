@@ -35,7 +35,7 @@ async function discoverRaplDomains() {
       }
     }
   } catch (e) {
-    logger.warn('RAPL not available:', e.message);
+    logger.warn(`RAPL not available: ${e.message}`);
   }
 
   return domains;
@@ -94,7 +94,7 @@ async function getPowerUsage() {
             energyDelta = maxEnergy - prev.energy + curr.energy;
           } else {
             // Fallback if maxEnergy is unavailable but counter wrapped
-            energyDelta = curr.energy; 
+            energyDelta = curr.energy;
           }
         }
 

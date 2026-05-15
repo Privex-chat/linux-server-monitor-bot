@@ -1,69 +1,70 @@
 require('dotenv').config();
 
 module.exports = {
-  // ── Discord ──────────────────────────────────────────────
+  // ── Discord (required — set in .env) ─────────────────────
   DISCORD_TOKEN: process.env.DISCORD_TOKEN,
-  GUILD_ID: process.env.GUILD_ID || '1498377364231422106',
+  GUILD_ID: process.env.GUILD_ID,
   CHANNEL_NAME: process.env.CHANNEL_NAME || 'server-monitor',
-  ALERT_USER_ID: process.env.ALERT_USER_ID || '1053965380957241344',
+  ALERT_USER_ID: process.env.ALERT_USER_ID,
+  OWNER_IDS: process.env.OWNER_IDS
+    ? process.env.OWNER_IDS.split(',').map((s) => s.trim())
+    : process.env.ALERT_USER_ID
+      ? [process.env.ALERT_USER_ID]
+      : [],
   SUDO_ROLE_NAME: process.env.SUDO_ROLE_NAME || 'sudo',
 
   // ── Intervals ────────────────────────────────────────────
-  LIVE_INTERVAL_MIN_MS: 12 * 1000,      // 12 seconds minimum
-  LIVE_INTERVAL_MAX_MS: 15 * 1000,      // 15 seconds maximum
-  SECURITY_INTERVAL_MS: 5 * 60 * 1000,  // 5 minutes
-  LOG_CHECK_INTERVAL_MS: 30 * 1000,     // 30 seconds
+  LIVE_INTERVAL_MIN_MS: 12 * 1000,
+  LIVE_INTERVAL_MAX_MS: 15 * 1000,
+  SECURITY_INTERVAL_MS: 5 * 60 * 1000,
+  LOG_CHECK_INTERVAL_MS: 30 * 1000,
 
-  // ── Cron (server runs in UTC, these fire at IST midnight/etc) ──
-  DAILY_CRON: '30 18 * * *',            // 00:00 IST = 18:30 UTC prev day
-  WEEKLY_CRON: '30 18 * * 0',           // Sunday 00:00 IST
-  SECURITY_SCAN_CRON: '0 12 * * *',     // 17:30 IST daily deep scan
+  // ── Cron (UTC — adjust for your timezone) ────────────────
+  DAILY_CRON: process.env.DAILY_CRON || '30 18 * * *',
+  WEEKLY_CRON: process.env.WEEKLY_CRON || '30 18 * * 0',
+  SECURITY_SCAN_CRON: process.env.SECURITY_SCAN_CRON || '0 12 * * *',
 
   // ── Timezone ─────────────────────────────────────────────
-  TIMEZONE: 'Asia/Kolkata',
+  TIMEZONE: process.env.TIMEZONE || 'UTC',
 
   // ── Power ────────────────────────────────────────────────
-  // Base system load in watts (motherboard ~20W, fans ~3W, RAM 16GB ~4W, HDD ~6W)
-  // RAPL only measures CPU/DRAM; this covers everything else
-  POWER_BASE_LOAD_W: 33,
-  PSU_WATTAGE: 450,
+  // Base system load in watts — everything RAPL doesn't measure
+  // (motherboard, fans, RAM, drives). Adjust for your hardware.
+  POWER_BASE_LOAD_W: parseInt(process.env.POWER_BASE_LOAD_W) || 33,
+  PSU_WATTAGE: parseInt(process.env.PSU_WATTAGE) || 450,
 
   // ── Security thresholds ──────────────────────────────────
-  SSH_FAIL_WARN_THRESHOLD: 10,
-  SSH_FAIL_CRIT_THRESHOLD: 50,
-  EXPECTED_PORTS: [
-    22,    // SSH
-    53,    // DNS
-    80,    // HTTP
-    443,   // HTTPS
-    4330,  // Custom service
-    5432,  // PostgreSQL
-    5433,  // PostgreSQL (alt)
-    6379,  // Redis
-    8000,  // Web app
-    8080,  // Web app
-    8081,  // Web app
-    9090,  // Monitoring / web UI
-    15279, // Custom service
-    20241, // Custom service
-    44321, // Custom service
-    44322, // Custom service
-    44323, // Custom service
-  ],
+  SSH_FAIL_WARN_THRESHOLD: parseInt(process.env.SSH_FAIL_WARN_THRESHOLD) || 10,
+  SSH_FAIL_CRIT_THRESHOLD: parseInt(process.env.SSH_FAIL_CRIT_THRESHOLD) || 50,
+  EXPECTED_PORTS: process.env.EXPECTED_PORTS ? process.env.EXPECTED_PORTS.split(',').map(Number) : [22, 53, 80, 443],
 
-  // ── Watched processes ────────────────────────────────────
-  WATCHED_PM2_IDS: [1, 2],
-  WATCHED_DOCKER_IDS: ['df0514b4c944', '7f98311dfbbd', '2c4ccfc9f9fd'],
+  // ── Watched processes (comma-separated in .env) ──────────
+  WATCHED_PM2_IDS: process.env.WATCHED_PM2_IDS ? process.env.WATCHED_PM2_IDS.split(',').map(Number) : [],
+  WATCHED_DOCKER_IDS: process.env.WATCHED_DOCKER_IDS
+    ? process.env.WATCHED_DOCKER_IDS.split(',').map((s) => s.trim())
+    : [],
 
   // ── PM2 ──────────────────────────────────────────────────
-  PM2_USER: 'sonix',
+  PM2_USER: process.env.PM2_USER || '',
 
   // ── Nginx log paths ──────────────────────────────────────
-  NGINX_ACCESS_LOG: '/var/log/nginx/access.log',
-  NGINX_ERROR_LOG: '/var/log/nginx/error.log',
+  NGINX_ACCESS_LOG: process.env.NGINX_ACCESS_LOG || '/var/log/nginx/access.log',
+  NGINX_ERROR_LOG: process.env.NGINX_ERROR_LOG || '/var/log/nginx/error.log',
 
   // ── State persistence ────────────────────────────────────
   STATE_FILE: './data/state.json',
+
+  // ── Limits ────────────────────────────────────────────────
+  MAX_DISCORD_MSG_LENGTH: 1900,
+  COMMAND_TIMEOUT_MS: 5000,
+  COMMAND_TIMEOUT_LONG_MS: 30000,
+  LOG_TAIL_MAX_BYTES: 50000,
+  MAX_DAILY_SAMPLES: 1500,
+
+  // ── Rate limiting (milliseconds) ─────────────────────────
+  COOLDOWN_DEFAULT_MS: 3000,
+  COOLDOWN_DANGEROUS_MS: 30000,
+  COOLDOWN_HEAVY_MS: 10000,
 
   // ── Embed colors ─────────────────────────────────────────
   COLORS: {

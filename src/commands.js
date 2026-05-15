@@ -2,24 +2,103 @@ const { EmbedBuilder } = require('discord.js');
 const config = require('../config');
 const logger = require('./utils/logger');
 const { safeExec } = require('./utils/exec');
-const { formatBytes, formatUptime, istNow } = require('./formatters/embeds');
 const { getState } = require('./utils/storage');
 
 const PREFIX = '!';
 
-// ── Access checks ────────────────────────────────────────
+// ── Rate limiting ────────────────────────────────────────
+const cooldowns = new Map();
 
-// Owner always has access (fallback)
-function isOwner(msg) {
-  return msg.author.id === config.ALERT_USER_ID;
+function checkCooldown(userId, cmdName, cooldownMs) {
+  const key = `${userId}:${cmdName}`;
+  const now = Date.now();
+  const expiresAt = cooldowns.get(key);
+  if (expiresAt && now < expiresAt) {
+    const remaining = Math.ceil((expiresAt - now) / 1000);
+    return remaining;
+  }
+  cooldowns.set(key, now + cooldownMs);
+  return 0;
 }
 
-// Check if user has the "sudo" role OR is the owner
+// Cleanup stale entries every 5 minutes
+setInterval(
+  () => {
+    const now = Date.now();
+    for (const [key, exp] of cooldowns) {
+      if (now >= exp) cooldowns.delete(key);
+    }
+  },
+  5 * 60 * 1000
+);
+
+// ── Access checks ────────────────────────────────────────
+
+function isOwner(msg) {
+  return config.OWNER_IDS.includes(msg.author.id);
+}
+
 function hasAccess(msg) {
   if (isOwner(msg)) return true;
   const state = getState();
   if (!state.sudoRoleId) return false;
   return msg.member?.roles?.cache?.has(state.sudoRoleId) || false;
+}
+
+// ── Audit logging ────────────────────────────────────────
+let auditThread = null;
+
+function setAuditThread(thread) {
+  auditThread = thread;
+}
+
+async function logAudit(msg, cmdName, args) {
+  if (!auditThread) return;
+  const line = `\`${new Date().toISOString()}\` **${msg.author.tag}** ran \`!${cmdName} ${args.join(' ').substring(0, 150)}\``;
+  await auditThread.send(line).catch(() => {});
+}
+
+// ── Input validation helpers ─────────────────────────────
+const SAFE_NAME_RE = /^[a-zA-Z0-9._-]+$/;
+
+function isValidServiceName(name) {
+  return SAFE_NAME_RE.test(name) && name.length <= 100;
+}
+
+// ── Dangerous command blocklist ───────────────────────────
+const BLOCKED_COMMANDS = [
+  { pattern: /rm\s+(-[^\s]*\s+)*\/(\s|$)/, reason: 'Recursive delete of root filesystem' },
+  { pattern: /rm\s+-[^\s]*r[^\s]*\s+\//, reason: 'Recursive delete of root filesystem' },
+  { pattern: /mkfs/, reason: 'Filesystem format' },
+  { pattern: /dd\s+if=/, reason: 'Raw disk write' },
+  { pattern: /:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;?\s*:/, reason: 'Fork bomb' },
+  { pattern: /shutdown/, reason: 'System shutdown (use !reboot instead)' },
+  { pattern: /\binit\s+0\b/, reason: 'System halt' },
+  { pattern: /\bhalt\b/, reason: 'System halt' },
+  { pattern: /\bpoweroff\b/, reason: 'System poweroff' },
+  { pattern: /curl\s.*\|\s*(ba)?sh/, reason: 'Remote code execution via pipe' },
+  { pattern: /wget\s.*\|\s*(ba)?sh/, reason: 'Remote code execution via pipe' },
+  { pattern: /\bpython[23]?\s+-c\b/, reason: 'Interpreter code execution' },
+  { pattern: /\bperl\s+-e\b/, reason: 'Interpreter code execution' },
+  { pattern: /\bruby\s+-e\b/, reason: 'Interpreter code execution' },
+  { pattern: /\bnode\s+-e\b/, reason: 'Interpreter code execution' },
+  { pattern: />\s*\/etc\//, reason: 'Overwriting system config files' },
+  { pattern: />\s*\/boot\//, reason: 'Overwriting boot files' },
+  { pattern: /\bchmod\s+[0-7]*777\b/, reason: 'World-writable permissions' },
+  { pattern: /\bchown\s.*\/etc\//, reason: 'Changing ownership of system files' },
+  { pattern: /LD_PRELOAD=/, reason: 'Library injection' },
+  { pattern: /crontab\s.*-r\b/, reason: 'Crontab removal' },
+  { pattern: /visudo/, reason: 'Sudoers modification' },
+  { pattern: />\s*\/dev\/[sh]d/, reason: 'Raw device write' },
+  { pattern: /\bwipe\b/, reason: 'Disk wipe utility' },
+  { pattern: /\bshred\b/, reason: 'Secure file deletion' },
+];
+
+function checkBlockedCommand(command) {
+  for (const { pattern, reason } of BLOCKED_COMMANDS) {
+    if (pattern.test(command)) return reason;
+  }
+  return null;
 }
 
 // ── Command registry ─────────────────────────────────────
@@ -41,7 +120,7 @@ registerCommand('help', {
   category: 'General',
   async execute(msg) {
     const categories = {};
-    for (const [name, cmd] of commands) {
+    for (const [, cmd] of commands) {
       if (cmd.isAlias) continue;
       const cat = cmd.category || 'Other';
       if (!categories[cat]) categories[cat] = [];
@@ -75,7 +154,10 @@ registerCommand('status', {
       safeExec('bash', ['-c', "grep 'cpu ' /proc/stat | awk '{u=$2+$4; t=$2+$4+$5; printf \"%.1f%%\", u/t*100}'"]),
       safeExec('free', ['-h']),
       safeExec('df', ['-h', '/']),
-      safeExec('bash', ['-c', "cat /proc/uptime | awk '{d=int($1/86400);h=int($1%86400/3600);m=int($1%3600/60); printf \"%dd %dh %dm\",d,h,m}'"]),
+      safeExec('bash', [
+        '-c',
+        'cat /proc/uptime | awk \'{d=int($1/86400);h=int($1%86400/3600);m=int($1%3600/60); printf "%dd %dh %dm",d,h,m}\'',
+      ]),
     ]);
 
     const memLines = mem.stdout?.trim().split('\n') || [];
@@ -90,7 +172,11 @@ registerCommand('status', {
         { name: '🖥️ CPU', value: cpu.stdout || 'N/A', inline: true },
         { name: '⏱️ Uptime', value: uptime.stdout || 'N/A', inline: true },
         { name: '🧠 RAM', value: memInfo.length > 2 ? `${memInfo[2]} / ${memInfo[1]}` : 'N/A', inline: true },
-        { name: '💾 Disk /', value: diskInfo.length > 3 ? `${diskInfo[2]} / ${diskInfo[1]} (${diskInfo[4]})` : 'N/A', inline: true },
+        {
+          name: '💾 Disk /',
+          value: diskInfo.length > 3 ? `${diskInfo[2]} / ${diskInfo[1]} (${diskInfo[4]})` : 'N/A',
+          inline: true,
+        }
       )
       .setTimestamp();
 
@@ -120,7 +206,16 @@ registerCommand('df', {
   usage: '!df',
   category: 'System',
   async execute(msg) {
-    const { stdout } = await safeExec('df', ['-h', '--output=target,size,used,avail,pcent', '-x', 'tmpfs', '-x', 'devtmpfs', '-x', 'overlay']);
+    const { stdout } = await safeExec('df', [
+      '-h',
+      '--output=target,size,used,avail,pcent',
+      '-x',
+      'tmpfs',
+      '-x',
+      'devtmpfs',
+      '-x',
+      'overlay',
+    ]);
     await msg.reply(`\`\`\`\n${stdout?.substring(0, 1900) || 'No data'}\n\`\`\``);
   },
 });
@@ -138,14 +233,16 @@ registerCommand('ssh', {
 
     const count = countResult.stdout?.trim() || '0';
     let ips = 'None';
-    
+
     if (ipsResult.success && ipsResult.stdout) {
       const counts = {};
       for (const line of ipsResult.stdout.split('\n')) {
         const match = line.match(/from\s+([^\s]+)/);
         if (match) counts[match[1]] = (counts[match[1]] || 0) + 1;
       }
-      const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 15);
+      const sorted = Object.entries(counts)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 15);
       if (sorted.length > 0) {
         ips = sorted.map(([ip, c]) => `    ${c} ${ip}`).join('\n');
       }
@@ -156,7 +253,7 @@ registerCommand('ssh', {
       .setColor(parseInt(count) > 50 ? config.COLORS.RED : config.COLORS.YELLOW)
       .addFields(
         { name: 'Total Failed', value: count, inline: true },
-        { name: 'Top Attacker IPs', value: `\`\`\`\n${ips.substring(0, 1000)}\n\`\`\`` },
+        { name: 'Top Attacker IPs', value: `\`\`\`\n${ips.substring(0, 1000)}\n\`\`\`` }
       )
       .setTimestamp();
 
@@ -170,6 +267,7 @@ registerCommand('ban', {
   usage: '!ban <ip>',
   category: 'Security',
   dangerous: true,
+  cooldown: config.COOLDOWN_HEAVY_MS,
   async execute(msg, args) {
     const ip = args[0];
     if (!ip || !/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) {
@@ -232,6 +330,9 @@ registerCommand('pm2', {
 
     const target = args[1];
     if (!target) return msg.reply('❌ Provide a process name/id: `!pm2 restart myapp`');
+    if (!isValidServiceName(target)) {
+      return msg.reply('❌ Invalid process name (letters, numbers, dots, hyphens, underscores only).');
+    }
 
     if (sub === 'restart') {
       const { stdout, success } = await safeExec('pm2', ['restart', target]);
@@ -246,7 +347,9 @@ registerCommand('pm2', {
       return msg.reply(success ? `✅ Started PM2 process \`${target}\`.` : `❌ Failed:\n\`\`\`${stdout}\`\`\``);
     }
     if (sub === 'logs') {
-      const { stdout } = await safeExec('pm2', ['logs', target, '--lines', '30', '--nostream', '--raw'], { timeout: 10000 });
+      const { stdout } = await safeExec('pm2', ['logs', target, '--lines', '30', '--nostream', '--raw'], {
+        timeout: 10000,
+      });
       return msg.reply(`\`\`\`\n${stdout?.substring(0, 1900) || 'No logs'}\n\`\`\``);
     }
 
@@ -263,12 +366,20 @@ registerCommand('docker', {
     const sub = args[0]?.toLowerCase();
 
     if (!sub || sub === 'ps' || sub === 'list') {
-      const { stdout } = await safeExec('docker', ['ps', '-a', '--format', 'table {{.Names}}\t{{.Status}}\t{{.Image}}\t{{.Ports}}']);
+      const { stdout } = await safeExec('docker', [
+        'ps',
+        '-a',
+        '--format',
+        'table {{.Names}}\t{{.Status}}\t{{.Image}}\t{{.Ports}}',
+      ]);
       return msg.reply(`\`\`\`\n${stdout?.substring(0, 1900) || 'No containers'}\n\`\`\``);
     }
 
     const target = args[1];
     if (!target) return msg.reply('❌ Provide a container name/id: `!docker restart mycontainer`');
+    if (!isValidServiceName(target)) {
+      return msg.reply('❌ Invalid container name (letters, numbers, dots, hyphens, underscores only).');
+    }
 
     if (sub === 'restart') {
       const { success } = await safeExec('docker', ['restart', target], { timeout: 30000 });
@@ -297,6 +408,7 @@ registerCommand('service', {
   usage: '!service <name> <status|start|stop|restart>',
   category: 'Services',
   dangerous: true,
+  cooldown: config.COOLDOWN_DANGEROUS_MS,
   async execute(msg, args) {
     const name = args[0];
     const action = args[1]?.toLowerCase();
@@ -305,7 +417,7 @@ registerCommand('service', {
 
     const allowed = ['status', 'start', 'stop', 'restart', 'enable', 'disable'];
     if (!allowed.includes(action)) {
-      return msg.reply(`❌ Allowed actions: ${allowed.map(a => `\`${a}\``).join(', ')}`);
+      return msg.reply(`❌ Allowed actions: ${allowed.map((a) => `\`${a}\``).join(', ')}`);
     }
 
     // Sanitize service name (letters, numbers, hyphens, underscores, dots only)
@@ -315,7 +427,9 @@ registerCommand('service', {
 
     const { stdout, stderr, success } = await safeExec('sudo', ['systemctl', action, name], { timeout: 15000 });
     const output = stdout || stderr || 'Done (no output)';
-    await msg.reply(`${success ? '✅' : '❌'} \`systemctl ${action} ${name}\`\n\`\`\`\n${output.substring(0, 1800)}\n\`\`\``);
+    await msg.reply(
+      `${success ? '✅' : '❌'} \`systemctl ${action} ${name}\`\n\`\`\`\n${output.substring(0, 1800)}\n\`\`\``
+    );
   },
 });
 
@@ -339,7 +453,7 @@ registerCommand('nginx', {
       .setColor(testText.includes('successful') ? config.COLORS.GREEN : config.COLORS.RED)
       .addFields(
         { name: 'Service Status', value: `\`\`\`\n${statusText}\n\`\`\`` },
-        { name: 'Config Test', value: `\`\`\`\n${testText}\n\`\`\`` },
+        { name: 'Config Test', value: `\`\`\`\n${testText}\n\`\`\`` }
       )
       .setTimestamp();
 
@@ -347,50 +461,64 @@ registerCommand('nginx', {
   },
 });
 
+// ── Shared exec runner with confirmation ─────────────────
+async function runWithConfirmation(msg, command, useSudo) {
+  const blockReason = checkBlockedCommand(command);
+  if (blockReason) {
+    return msg.reply(`🚫 Blocked: ${blockReason}`);
+  }
+
+  const prefix = useSudo ? 'sudo ' : '';
+  const confirm = await msg.reply(
+    `⚠️ **Confirm execution:**\n\`\`\`\n${prefix}${command.substring(0, 200)}\n\`\`\`\nReply \`yes\` within 15s to run, or it will be cancelled.`
+  );
+
+  const filter = (m) => config.OWNER_IDS.includes(m.author.id) && m.content.toLowerCase() === 'yes';
+  try {
+    const collected = await msg.channel.awaitMessages({ filter, max: 1, time: 15000, errors: ['time'] });
+    if (collected.size === 0) {
+      return confirm.edit('❌ Cancelled (no confirmation).');
+    }
+  } catch {
+    return confirm.edit('❌ Cancelled (timed out).');
+  }
+
+  await confirm.edit(`⏳ Running: \`${prefix}${command.substring(0, 100)}\`...`);
+
+  const execArgs = useSudo ? ['sudo', ['bash', '-c', command]] : ['bash', ['-c', command]];
+  const { stdout, stderr, success } = await safeExec(execArgs[0], execArgs[1], {
+    timeout: config.COMMAND_TIMEOUT_LONG_MS,
+  });
+  const output = (stdout || stderr || '(no output)').substring(0, config.MAX_DISCORD_MSG_LENGTH - 100);
+
+  await confirm.edit(`${success ? '✅' : '❌'} \`${prefix}${command.substring(0, 80)}\`\n\`\`\`\n${output}\n\`\`\``);
+}
+
 // ── EXEC (dangerous — owner only, with confirmation) ────
 registerCommand('exec', {
-  description: 'Run a shell command (⚠️ dangerous)',
+  description: 'Run a shell command (⚠️ dangerous, requires confirmation)',
   usage: '!exec <command>',
   category: '⚠️ Dangerous',
   dangerous: true,
+  cooldown: config.COOLDOWN_DANGEROUS_MS,
   async execute(msg, args) {
     const command = args.join(' ');
     if (!command) return msg.reply('❌ Usage: `!exec <command>`');
-
-    // Block extremely dangerous commands
-    const blocked = [/rm\s+-rf\s+\//, /mkfs/, /dd\s+if=/, /:(){ :|:& };:/, /shutdown/, /init\s+0/, /halt/];
-    if (blocked.some((p) => p.test(command))) {
-      return msg.reply('🚫 This command is blocked for safety.');
-    }
-
-    const reply = await msg.reply(`⏳ Running: \`${command.substring(0, 100)}\`...`);
-    const { stdout, stderr, success } = await safeExec('bash', ['-c', command], { timeout: 30000 });
-    const output = (stdout || stderr || '(no output)').substring(0, 1800);
-
-    await reply.edit(`${success ? '✅' : '❌'} \`${command.substring(0, 80)}\`\n\`\`\`\n${output}\n\`\`\``);
+    await runWithConfirmation(msg, command, false);
   },
 });
 
-// ── SUDO (dangerous — owner only) ────────────────────────
+// ── SUDO (dangerous — owner only, with confirmation) ────
 registerCommand('sudo', {
-  description: 'Run a command with sudo (⚠️ dangerous)',
+  description: 'Run a command with sudo (⚠️ dangerous, requires confirmation)',
   usage: '!sudo <command>',
   category: '⚠️ Dangerous',
   dangerous: true,
+  cooldown: config.COOLDOWN_DANGEROUS_MS,
   async execute(msg, args) {
     const command = args.join(' ');
     if (!command) return msg.reply('❌ Usage: `!sudo <command>`');
-
-    const blocked = [/rm\s+-rf\s+\//, /mkfs/, /dd\s+if=/, /:(){ :|:& };:/, /shutdown/, /init\s+0/, /halt/];
-    if (blocked.some((p) => p.test(command))) {
-      return msg.reply('🚫 This command is blocked for safety.');
-    }
-
-    const reply = await msg.reply(`⏳ Running with sudo: \`${command.substring(0, 100)}\`...`);
-    const { stdout, stderr, success } = await safeExec('sudo', ['bash', '-c', command], { timeout: 30000 });
-    const output = (stdout || stderr || '(no output)').substring(0, 1800);
-
-    await reply.edit(`${success ? '✅' : '❌'} \`sudo ${command.substring(0, 80)}\`\n\`\`\`\n${output}\n\`\`\``);
+    await runWithConfirmation(msg, command, true);
   },
 });
 
@@ -400,10 +528,13 @@ registerCommand('reboot', {
   usage: '!reboot',
   category: '⚠️ Dangerous',
   dangerous: true,
+  cooldown: config.COOLDOWN_DANGEROUS_MS,
   async execute(msg) {
-    const confirm = await msg.reply('⚠️ **Are you sure you want to reboot the server?** Reply `yes` within 15 seconds to confirm.');
+    const confirm = await msg.reply(
+      '⚠️ **Are you sure you want to reboot the server?** Reply `yes` within 15 seconds to confirm.'
+    );
 
-    const filter = (m) => m.author.id === config.ALERT_USER_ID && m.content.toLowerCase() === 'yes';
+    const filter = (m) => config.OWNER_IDS.includes(m.author.id) && m.content.toLowerCase() === 'yes';
     try {
       const collected = await msg.channel.awaitMessages({ filter, max: 1, time: 15000, errors: ['time'] });
       if (collected.size > 0) {
@@ -435,11 +566,17 @@ registerCommand('logs', {
     const logPath = logMap[logName];
 
     if (!logPath) {
-      return msg.reply(`❌ Unknown log. Available: ${Object.keys(logMap).map(k => `\`${k}\``).join(', ')}`);
+      return msg.reply(
+        `❌ Unknown log. Available: ${Object.keys(logMap)
+          .map((k) => `\`${k}\``)
+          .join(', ')}`
+      );
     }
 
     const { stdout } = await safeExec('sudo', ['tail', `-${lines}`, logPath], { timeout: 5000 });
-    await msg.reply(`📋 **${logName}** (last ${lines} lines):\n\`\`\`\n${(stdout || 'Empty/no access').substring(0, 1900)}\n\`\`\``);
+    await msg.reply(
+      `📋 **${logName}** (last ${lines} lines):\n\`\`\`\n${(stdout || 'Empty/no access').substring(0, 1900)}\n\`\`\``
+    );
   },
 });
 
@@ -462,6 +599,7 @@ registerCommand('explain', {
   usage: '!explain',
   aliases: ['wtf', 'whatsup', 'report'],
   category: '📖 Explain',
+  cooldown: config.COOLDOWN_HEAVY_MS,
   async execute(msg) {
     const reply = await msg.reply('🔍 Analyzing your server security...');
 
@@ -493,7 +631,7 @@ registerCommand('explain', {
     } else {
       lines.push(`🔴 **${sshFails} failed login attempts** — high volume!`);
       lines.push('   **Who:** Could be a targeted brute-force attack.');
-      lines.push('   **Risk:** Medium — they\'re trying many password combinations.');
+      lines.push("   **Risk:** Medium — they're trying many password combinations.");
       lines.push('   **Fix:** Make sure you use SSH keys, not passwords. Run `!ssh` to see which IPs are attacking.');
     }
 
@@ -504,7 +642,9 @@ registerCommand('explain', {
         const match = line.match(/from\s+([^\s]+)/);
         if (match) counts[match[1]] = (counts[match[1]] || 0) + 1;
       }
-      const topIPs = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 3);
+      const topIPs = Object.entries(counts)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3);
       if (topIPs.length > 0 && sshFails > 0) {
         lines.push('\n   **Top attackers:**');
         for (const [ip, c] of topIPs) {
@@ -517,7 +657,7 @@ registerCommand('explain', {
     lines.push('\n**🔥 Firewall (UFW)**');
     if (ufwResult.success && ufwResult.stdout?.includes('active')) {
       lines.push('✅ Your firewall is **ON** and protecting your server.');
-      lines.push('   It blocks all incoming connections except the ports you\'ve allowed.');
+      lines.push("   It blocks all incoming connections except the ports you've allowed.");
     } else {
       lines.push('🔴 Your firewall appears to be **OFF**!');
       lines.push('   **Risk:** Anyone on the internet can try to connect to any service on your server.');
@@ -528,17 +668,17 @@ registerCommand('explain', {
     lines.push('\n**🚫 fail2ban (Auto-Blocker)**');
     if (f2bResult.success) {
       const bannedMatch = f2bResult.stdout?.match(/Currently banned:\s*(\d+)/g);
-      const totalBanned = bannedMatch
-        ? bannedMatch.reduce((sum, m) => sum + parseInt(m.match(/\d+/)[0]), 0)
-        : 0;
+      const totalBanned = bannedMatch ? bannedMatch.reduce((sum, m) => sum + parseInt(m.match(/\d+/)[0]), 0) : 0;
 
       if (totalBanned > 0) {
-        lines.push(`🛡️ **${totalBanned} IP(s) currently blocked** — fail2ban caught them trying to break in and locked them out.`);
+        lines.push(
+          `🛡️ **${totalBanned} IP(s) currently blocked** — fail2ban caught them trying to break in and locked them out.`
+        );
       } else {
         lines.push('✅ No IPs currently blocked. fail2ban is running and watching.');
       }
     } else {
-      lines.push('⚠️ fail2ban doesn\'t seem to be running.');
+      lines.push("⚠️ fail2ban doesn't seem to be running.");
       lines.push('   **Fix:** Run `!service fail2ban start`');
     }
 
@@ -550,7 +690,7 @@ registerCommand('explain', {
       const match = pl.match(/:(\d+)\s/);
       if (match) openPorts.push(parseInt(match[1]));
     }
-    const uniquePorts = [...new Set(openPorts)].filter(p => p < 49152).sort((a, b) => a - b);
+    const uniquePorts = [...new Set(openPorts)].filter((p) => p < 49152).sort((a, b) => a - b);
 
     const portExplanations = {
       22: 'SSH (remote login)',
@@ -568,16 +708,16 @@ registerCommand('explain', {
     };
 
     if (uniquePorts.length > 0) {
-      const explained = uniquePorts.slice(0, 12).map(p => {
+      const explained = uniquePorts.slice(0, 12).map((p) => {
         const desc = portExplanations[p] || (config.EXPECTED_PORTS.includes(p) ? 'Your service' : '⚠️ Unknown');
         return `   • Port **${p}** — ${desc}`;
       });
       lines.push(explained.join('\n'));
 
-      const unexpected = uniquePorts.filter(p => !config.EXPECTED_PORTS.includes(p));
+      const unexpected = uniquePorts.filter((p) => !config.EXPECTED_PORTS.includes(p));
       if (unexpected.length > 0) {
         lines.push(`\n   ⚠️ **${unexpected.length} unexpected port(s):** ${unexpected.join(', ')}`);
-        lines.push('   If you don\'t recognize these, run `!ports` for details.');
+        lines.push("   If you don't recognize these, run `!ports` for details.");
       } else {
         lines.push('   ✅ All ports are in your expected list.');
       }
@@ -587,8 +727,8 @@ registerCommand('explain', {
     lines.push('\n**👀 Suspicious Processes**');
     const procLines = procsResult.stdout?.trim().split('\n').slice(0, 15) || [];
     const minerPatterns = [/xmrig/i, /minerd/i, /cpuminer/i, /cryptonight/i];
-    const miners = procLines.filter(l => minerPatterns.some(p => p.test(l)));
-    const highCpu = procLines.filter(l => {
+    const miners = procLines.filter((l) => minerPatterns.some((p) => p.test(l)));
+    const highCpu = procLines.filter((l) => {
       const cpu = parseFloat(l.trim().split(/\s+/)[2]);
       return cpu > 80;
     });
@@ -635,7 +775,7 @@ registerCommand('threats', {
   aliases: ['danger', 'alerts'],
   category: '📖 Explain',
   async execute(msg) {
-    const [sshResult, f2bResult, procsResult] = await Promise.all([
+    const [sshResult, , procsResult] = await Promise.all([
       safeExec('bash', ['-c', "sudo grep -c 'Failed password' /var/log/auth.log 2>/dev/null || echo 0"]),
       safeExec('sudo', ['fail2ban-client', 'status', 'sshd'], { timeout: 5000 }),
       safeExec('ps', ['aux', '--sort=-%cpu', '--no-headers'], { timeout: 5000 }),
@@ -666,7 +806,7 @@ registerCommand('threats', {
     // Crypto miners
     const procLines = procsResult.stdout?.trim().split('\n') || [];
     const minerPatterns = [/xmrig/i, /minerd/i, /cpuminer/i, /cryptonight/i, /stratum/i];
-    const miners = procLines.filter(l => minerPatterns.some(p => p.test(l)));
+    const miners = procLines.filter((l) => minerPatterns.some((p) => p.test(l)));
     if (miners.length > 0) {
       threats.push({
         name: 'Crypto Miner Detected',
@@ -689,7 +829,9 @@ registerCommand('threats', {
       const embed = new EmbedBuilder()
         .setTitle('🛡️ No Active Threats')
         .setColor(config.COLORS.GREEN)
-        .setDescription('✅ **Your server has no active threats right now.**\n\nEverything looks good! The bot is continuously watching for:\n• SSH brute force attacks\n• Malware and crypto miners\n• Suspicious processes\n• Unauthorized access\n\nYou\'ll get pinged immediately if anything comes up.')
+        .setDescription(
+          "✅ **Your server has no active threats right now.**\n\nEverything looks good! The bot is continuously watching for:\n• SSH brute force attacks\n• Malware and crypto miners\n• Suspicious processes\n• Unauthorized access\n\nYou'll get pinged immediately if anything comes up."
+        )
         .setTimestamp();
 
       return msg.reply({ embeds: [embed] });
@@ -698,13 +840,19 @@ registerCommand('threats', {
     const embeds = threats.map((t) => {
       return new EmbedBuilder()
         .setTitle(`${t.severity} — ${t.name}`)
-        .setColor(t.severity.includes('CRITICAL') ? config.COLORS.RED : t.severity.includes('HIGH') ? config.COLORS.ORANGE : config.COLORS.YELLOW)
+        .setColor(
+          t.severity.includes('CRITICAL')
+            ? config.COLORS.RED
+            : t.severity.includes('HIGH')
+              ? config.COLORS.ORANGE
+              : config.COLORS.YELLOW
+        )
         .addFields(
           { name: '❓ What is happening?', value: t.what },
           { name: '👤 Who is doing this?', value: t.who },
           { name: '🕐 When?', value: t.when },
           { name: '📍 Where?', value: t.where },
-          { name: '🔧 How to fix', value: t.fix.map(f => `• ${f}`).join('\n') },
+          { name: '🔧 How to fix', value: t.fix.map((f) => `• ${f}`).join('\n') }
         )
         .setTimestamp();
     });
@@ -719,6 +867,7 @@ registerCommand('whois', {
   usage: '!whois <ip>',
   aliases: ['lookup', 'ip'],
   category: '📖 Explain',
+  cooldown: config.COOLDOWN_HEAVY_MS,
   async execute(msg, args) {
     const ip = args[0];
     if (!ip || !/^[\d.]+$/.test(ip)) {
@@ -730,7 +879,14 @@ registerCommand('whois', {
     // Use multiple sources for reliability
     const [whoisResult, geoResult] = await Promise.all([
       safeExec('whois', [ip], { timeout: 10000 }),
-      safeExec('bash', ['-c', `curl -s "http://ip-api.com/json/${ip}?fields=status,country,regionName,city,isp,org,as,query" 2>/dev/null`], { timeout: 10000 }),
+      safeExec(
+        'bash',
+        [
+          '-c',
+          `curl -s "http://ip-api.com/json/${ip}?fields=status,country,regionName,city,isp,org,as,query" 2>/dev/null`,
+        ],
+        { timeout: 10000 }
+      ),
     ]);
 
     const lines = [];
@@ -745,13 +901,16 @@ registerCommand('whois', {
           lines.push(`🏛️ **Organization:** ${geo.org || 'Unknown'}`);
           lines.push(`📡 **Network:** ${geo.as || 'Unknown'}`);
         }
-      } catch { /* parse error */ }
+      } catch {
+        /* parse error */
+      }
     }
 
     // Parse whois for abuse contact
     if (whoisResult.success && whoisResult.stdout) {
       const abuseMatch = whoisResult.stdout.match(/abuse.*?:\s*(.*)/im);
-      const netNameMatch = whoisResult.stdout.match(/NetName:\s*(.*)/im) || whoisResult.stdout.match(/netname:\s*(.*)/im);
+      const netNameMatch =
+        whoisResult.stdout.match(/NetName:\s*(.*)/im) || whoisResult.stdout.match(/netname:\s*(.*)/im);
 
       if (netNameMatch) lines.push(`🏷️ **Network Name:** ${netNameMatch[1].trim()}`);
       if (abuseMatch) lines.push(`📧 **Report abuse to:** ${abuseMatch[1].trim()}`);
@@ -785,10 +944,27 @@ registerCommand('whois', {
   },
 });
 
+// ── Error sanitization ───────────────────────────────────
+function sanitizeError(message) {
+  const patterns = [
+    [/\/home\/\S+/g, '/home/***'],
+    [/\/etc\/\S+/g, '/etc/***'],
+    [/\/var\/\S+/g, '/var/***'],
+    [/\/root\/\S+/g, '/root/***'],
+    [/password\S*/gi, 'password***'],
+    [/token\S*/gi, 'token***'],
+    [/\b\d{1,3}(\.\d{1,3}){3}\b/g, '***.***.***.***'],
+  ];
+  let sanitized = message;
+  for (const [pat, rep] of patterns) {
+    sanitized = sanitized.replace(pat, rep);
+  }
+  return sanitized.substring(0, 200);
+}
+
 // ── Handler ──────────────────────────────────────────────
 
 async function handleMessage(msg) {
-  // Ignore bots and messages without prefix
   if (msg.author.bot) return;
   if (!msg.content.startsWith(PREFIX)) return;
 
@@ -799,23 +975,30 @@ async function handleMessage(msg) {
   const cmd = commands.get(cmdName);
   if (!cmd) return;
 
-  // Role check — must have @sudo role (or be the owner)
   if (!hasAccess(msg)) {
     return msg.reply('🚫 You need the `sudo` role to use bot commands.');
   }
 
-  // Dangerous commands require the owner specifically
   if (cmd.dangerous && !isOwner(msg)) {
-    return msg.reply('🚫 Only the server owner can run dangerous commands (`exec`, `sudo`, `reboot`, `service`).');
+    return msg.reply('🚫 Only the server owner can run dangerous commands.');
+  }
+
+  // Rate limiting
+  const cooldownMs = cmd.cooldown || config.COOLDOWN_DEFAULT_MS;
+  const remaining = checkCooldown(msg.author.id, cmdName, cooldownMs);
+  if (remaining > 0) {
+    return msg.reply(`⏳ Cooldown: wait **${remaining}s** before using \`!${cmdName}\` again.`);
   }
 
   try {
     logger.info(`Command: !${cmdName} ${args.join(' ')} (by ${msg.author.tag})`);
+    if (cmd.dangerous) logAudit(msg, cmdName, args);
     await cmd.execute(msg, args);
   } catch (err) {
-    logger.error(`Command error (!${cmdName}):`, err.message);
-    await msg.reply(`❌ Error: ${err.message}`).catch(() => {});
+    logger.error(err, `Command error (!${cmdName})`);
+    const safeMsg = sanitizeError(err.message || 'Unknown error');
+    await msg.reply(`❌ Command failed: ${safeMsg}`).catch(() => {});
   }
 }
 
-module.exports = { handleMessage };
+module.exports = { handleMessage, setAuditThread };

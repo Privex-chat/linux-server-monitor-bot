@@ -1,11 +1,13 @@
 const fs = require('fs').promises;
 const path = require('path');
+const crypto = require('crypto');
 const config = require('../../config');
 const logger = require('./logger');
 
 const STATE_PATH = path.resolve(config.STATE_FILE);
 
 let stateCache = null;
+let writeLock = Promise.resolve();
 
 const DEFAULT_STATE = {
   channelId: null,
@@ -79,13 +81,20 @@ async function loadState() {
 }
 
 async function saveState() {
-  try {
-    const dir = path.dirname(STATE_PATH);
-    await fs.mkdir(dir, { recursive: true });
-    await fs.writeFile(STATE_PATH, JSON.stringify(stateCache, null, 2), 'utf8');
-  } catch (err) {
+  // Serialize writes: each save waits for the previous one to finish
+  writeLock = writeLock.then(() => atomicWrite()).catch((err) => {
     logger.error('Failed to save state:', err.message);
-  }
+  });
+  return writeLock;
+}
+
+async function atomicWrite() {
+  const dir = path.dirname(STATE_PATH);
+  await fs.mkdir(dir, { recursive: true });
+  const tmpPath = `${STATE_PATH}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+  const data = JSON.stringify(stateCache, null, 2);
+  await fs.writeFile(tmpPath, data, 'utf8');
+  await fs.rename(tmpPath, STATE_PATH);
 }
 
 function getState() {
@@ -98,4 +107,4 @@ async function updateState(updater) {
   await saveState();
 }
 
-module.exports = { loadState, saveState, getState, updateState };
+module.exports = { loadState, saveState, getState, updateState, DEFAULT_STATE };
