@@ -8,7 +8,8 @@ module.exports = {
   ALERT_USER_ID: process.env.ALERT_USER_ID || '1053965380957241344',
 
   // ── Intervals ────────────────────────────────────────────
-  LIVE_INTERVAL_MS: 60 * 1000,          // 1 minute
+  LIVE_INTERVAL_MIN_MS: 12 * 1000,      // 12 seconds minimum
+  LIVE_INTERVAL_MAX_MS: 15 * 1000,      // 15 seconds maximum
   SECURITY_INTERVAL_MS: 5 * 60 * 1000,  // 5 minutes
   LOG_CHECK_INTERVAL_MS: 30 * 1000,     // 30 seconds
 

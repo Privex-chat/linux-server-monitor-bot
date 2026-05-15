@@ -27,6 +27,7 @@ const client = new Client({
 });
 
 let intervals = [];
+let timeouts = [];
 let cronJobs = [];
 
 // ── Bot ready ────────────────────────────────────────────
@@ -75,11 +76,17 @@ client.once('ready', async () => {
 
     // ── Schedule recurring tasks ─────────────────────────
 
-    // Live stats: every 1 minute
-    const liveInterval = setInterval(async () => {
-      await liveStats.run();
-    }, config.LIVE_INTERVAL_MS);
-    intervals.push(liveInterval);
+    // Live stats: random 12-15s interval
+    function scheduleLiveStats() {
+      const delay = config.LIVE_INTERVAL_MIN_MS +
+        Math.random() * (config.LIVE_INTERVAL_MAX_MS - config.LIVE_INTERVAL_MIN_MS);
+      const t = setTimeout(async () => {
+        await liveStats.run();
+        scheduleLiveStats();
+      }, delay);
+      timeouts.push(t);
+    }
+    scheduleLiveStats();
 
     // Security status: every 5 minutes
     const secInterval = setInterval(async () => {
@@ -115,7 +122,7 @@ client.once('ready', async () => {
     cronJobs.push(scanJob);
 
     logger.info('All tasks scheduled. Bot is fully operational.');
-    logger.info(`  Live stats: every ${config.LIVE_INTERVAL_MS / 1000}s`);
+    logger.info(`  Live stats: every ${config.LIVE_INTERVAL_MIN_MS / 1000}-${config.LIVE_INTERVAL_MAX_MS / 1000}s (randomized)`);
     logger.info(`  Security status: every ${config.SECURITY_INTERVAL_MS / 1000}s`);
     logger.info(`  Log watcher: every ${config.LOG_CHECK_INTERVAL_MS / 1000}s`);
     logger.info(`  Daily summary: ${config.DAILY_CRON} (UTC)`);
@@ -147,6 +154,7 @@ process.on('uncaughtException', (err) => {
 function cleanup() {
   logger.info('Shutting down...');
   for (const interval of intervals) clearInterval(interval);
+  for (const t of timeouts) clearTimeout(t);
   for (const job of cronJobs) job.stop();
   client.destroy();
 }
