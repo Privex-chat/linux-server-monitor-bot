@@ -112,7 +112,7 @@ function buildLiveStatsEmbed(system, temps, power) {
         inline: true,
       }
     )
-    .setFooter({ text: 'Refreshes every 60 seconds' })
+    .setFooter({ text: 'Refreshes every 15 seconds' })
     .setTimestamp();
 
   return embed;

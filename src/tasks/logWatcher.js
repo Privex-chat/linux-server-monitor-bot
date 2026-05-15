@@ -60,22 +60,62 @@ async function watchAuthLog() {
     }
 
     const lines = stdout.trim().split('\n');
-    const importantLines = lines.filter((l) =>
-      /Failed password|Accepted password|sudo:|session opened|session closed|Invalid user|BREAK-IN/i.test(l)
-    );
+
+    // Bot's own monitoring commands to ignore
+    const botCommandPatterns = [
+      /COMMAND=.*\/usr\/bin\/tail/,
+      /COMMAND=.*\/usr\/bin\/grep/,
+      /COMMAND=.*\/usr\/bin\/last/,
+      /COMMAND=.*\/usr\/sbin\/smartctl/,
+      /COMMAND=.*\/usr\/sbin\/ufw/,
+      /COMMAND=.*\/usr\/bin\/fail2ban-client/,
+      /COMMAND=.*\/usr\/bin\/rkhunter/,
+      /COMMAND=.*\/usr\/sbin\/hddtemp/,
+      /COMMAND=.*\/usr\/sbin\/nvme/,
+      /COMMAND=.*\/usr\/bin\/ls -la \/proc/,
+    ];
+
+    const importantLines = lines.filter((l) => {
+      // Skip ALL session opened/closed lines (noise from every sudo/ssh/cron)
+      if (/pam_unix\(.*:session\):\s*session (opened|closed)/i.test(l)) return false;
+      // Skip CRON entirely
+      if (/CRON\[/i.test(l)) return false;
+      // Skip bot's own sudo monitoring commands
+      if (botCommandPatterns.some((p) => p.test(l))) return false;
+
+      // Only keep genuinely important events
+      if (/Failed password|Invalid user|BREAK-IN/i.test(l)) return true;
+      if (/Accepted password|Accepted publickey/i.test(l)) return true;
+      if (/sudo:/i.test(l)) return true;  // non-bot sudo commands
+      return false;
+    });
 
     if (importantLines.length > 0) {
-      // Batch into chunks of 10
-      for (let i = 0; i < importantLines.length; i += 10) {
-        const chunk = importantLines.slice(i, i + 10);
-        const formatted = chunk.map((l) => {
-          if (/Failed password|Invalid user|BREAK-IN/i.test(l)) return `🔴 ${l}`;
-          if (/Accepted password/i.test(l)) return `🟢 ${l}`;
-          if (/sudo:/i.test(l)) return `🟡 ${l}`;
-          return `⚪ ${l}`;
-        });
+      // Deduplicate repeated entries
+      const deduped = [];
+      const counts = new Map();
+      for (const line of importantLines) {
+        const msgPart = line.replace(/^\S+\s+\S+\s+\S+\s+/, '').trim();
+        if (counts.has(msgPart)) {
+          counts.set(msgPart, counts.get(msgPart) + 1);
+        } else {
+          counts.set(msgPart, 1);
+          deduped.push(line);
+        }
+      }
 
-        await thread.send(`\`\`\`\n${formatted.join('\n').substring(0, 1900)}\n\`\`\``);
+      const output = deduped.map((line) => {
+        const msgPart = line.replace(/^\S+\s+\S+\s+\S+\s+/, '').trim();
+        const count = counts.get(msgPart);
+        const prefix = /Failed password|Invalid user|BREAK-IN/i.test(line) ? '🔴'
+          : /Accepted password|Accepted publickey/i.test(line) ? '🟢'
+          : /sudo:/i.test(line) ? '🟡' : '⚪';
+        return count > 1 ? `${prefix} ${line} [×${count}]` : `${prefix} ${line}`;
+      });
+
+      for (let i = 0; i < output.length; i += 10) {
+        const chunk = output.slice(i, i + 10);
+        await thread.send(`\`\`\`\n${chunk.join('\n').substring(0, 1900)}\n\`\`\``);
       }
 
       // Alert on high volume of failures
@@ -131,8 +171,29 @@ async function watchSyslog() {
     );
 
     if (important.length > 0) {
-      for (let i = 0; i < important.length; i += 10) {
-        const chunk = important.slice(i, i + 10);
+      // Deduplicate: collapse repeated identical messages
+      const deduped = [];
+      const counts = new Map();
+      for (const line of important) {
+        // Strip timestamp to compare message content
+        const msgPart = line.replace(/^\S+\s+\S+\s+\S+\s+/, '').trim();
+        if (counts.has(msgPart)) {
+          counts.set(msgPart, counts.get(msgPart) + 1);
+        } else {
+          counts.set(msgPart, 1);
+          deduped.push(line);
+        }
+      }
+
+      // Append repeat counts
+      const output = deduped.map((line) => {
+        const msgPart = line.replace(/^\S+\s+\S+\s+\S+\s+/, '').trim();
+        const count = counts.get(msgPart);
+        return count > 1 ? `${line} [×${count}]` : line;
+      });
+
+      for (let i = 0; i < output.length; i += 10) {
+        const chunk = output.slice(i, i + 10);
         await thread.send(`\`\`\`\n${chunk.join('\n').substring(0, 1900)}\n\`\`\``);
       }
     }
