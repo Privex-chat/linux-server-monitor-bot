@@ -45,10 +45,17 @@ apt-get install -y -qq fail2ban
 if [ ! -f /etc/fail2ban/jail.local ]; then
   cat > /etc/fail2ban/jail.local <<'EOF'
 [DEFAULT]
-bantime  = 3600
-findtime = 600
+# Ignore localhost and all private LAN IPs (IPv4 and IPv6)
+ignoreip = 127.0.0.1/8 ::1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+# Ban for 1 hour
+bantime  = 1h
+# Within a 10 minute window
+findtime = 10m
+# If they fail 5 times
 maxretry = 5
 backend  = systemd
+# Use UFW for banning (supports IPv4 and IPv6 natively)
+banaction = ufw
 
 [sshd]
 enabled = true
@@ -67,6 +74,15 @@ enabled  = true
 port     = http,https
 logpath  = /var/log/nginx/access.log
 maxretry = 5
+
+# Ban repeat offenders for a whole week
+[recidive]
+enabled  = true
+logpath  = /var/log/fail2ban.log
+banaction = ufw
+bantime  = 1w
+findtime = 1d
+maxretry = 3
 EOF
   echo "   📝 Created /etc/fail2ban/jail.local with SSH + nginx jails"
 fi

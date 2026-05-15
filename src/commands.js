@@ -133,11 +133,23 @@ registerCommand('ssh', {
   async execute(msg) {
     const [countResult, ipsResult] = await Promise.all([
       safeExec('bash', ['-c', "sudo grep -c 'Failed password' /var/log/auth.log 2>/dev/null || echo 0"]),
-      safeExec('bash', ['-c', "sudo grep 'Failed password' /var/log/auth.log | grep -oP 'from \\K[^ ]+' | sort | uniq -c | sort -rn | head -15"]),
+      safeExec('bash', ['-c', "sudo grep 'Failed password' /var/log/auth.log 2>/dev/null"]),
     ]);
 
     const count = countResult.stdout?.trim() || '0';
-    const ips = ipsResult.stdout?.trim() || 'None';
+    let ips = 'None';
+    
+    if (ipsResult.success && ipsResult.stdout) {
+      const counts = {};
+      for (const line of ipsResult.stdout.split('\n')) {
+        const match = line.match(/from\s+([^\s]+)/);
+        if (match) counts[match[1]] = (counts[match[1]] || 0) + 1;
+      }
+      const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 15);
+      if (sorted.length > 0) {
+        ips = sorted.map(([ip, c]) => `    ${c} ${ip}`).join('\n');
+      }
+    }
 
     const embed = new EmbedBuilder()
       .setTitle('🔐 SSH Failed Attempts')
@@ -460,7 +472,7 @@ registerCommand('explain', {
       safeExec('sudo', ['ufw', 'status', 'verbose'], { timeout: 5000 }),
       safeExec('ss', ['-tlnp'], { timeout: 5000 }),
       safeExec('ps', ['aux', '--sort=-%cpu', '--no-headers'], { timeout: 5000 }),
-      safeExec('bash', ['-c', "sudo grep 'Failed password' /var/log/auth.log | grep -oP 'from \\K[^ ]+' | sort | uniq -c | sort -rn | head -5"], { timeout: 5000 }),
+      safeExec('bash', ['-c', "sudo grep 'Failed password' /var/log/auth.log 2>/dev/null"], { timeout: 5000 }),
     ]);
 
     const sshFails = parseInt(sshResult.stdout?.trim()) || 0;
@@ -487,14 +499,16 @@ registerCommand('explain', {
 
     // Top attackers
     if (loginsResult.success && loginsResult.stdout?.trim()) {
-      const topIPs = loginsResult.stdout.trim().split('\n').slice(0, 3);
+      const counts = {};
+      for (const line of loginsResult.stdout.split('\n')) {
+        const match = line.match(/from\s+([^\s]+)/);
+        if (match) counts[match[1]] = (counts[match[1]] || 0) + 1;
+      }
+      const topIPs = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 3);
       if (topIPs.length > 0 && sshFails > 0) {
         lines.push('\n   **Top attackers:**');
-        for (const entry of topIPs) {
-          const match = entry.trim().match(/(\d+)\s+([\d.]+)/);
-          if (match) {
-            lines.push(`   • \`${match[2]}\` tried **${match[1]} times**`);
-          }
+        for (const [ip, c] of topIPs) {
+          lines.push(`   • \`${ip}\` tried **${c} times**`);
         }
       }
     }
@@ -621,9 +635,8 @@ registerCommand('threats', {
   aliases: ['danger', 'alerts'],
   category: '📖 Explain',
   async execute(msg) {
-    const [sshResult, ipsResult, f2bResult, procsResult] = await Promise.all([
+    const [sshResult, f2bResult, procsResult] = await Promise.all([
       safeExec('bash', ['-c', "sudo grep -c 'Failed password' /var/log/auth.log 2>/dev/null || echo 0"]),
-      safeExec('bash', ['-c', "sudo grep 'Failed password' /var/log/auth.log | grep -oP 'from \\K[^ ]+' | sort | uniq -c | sort -rn | head -5"]),
       safeExec('sudo', ['fail2ban-client', 'status', 'sshd'], { timeout: 5000 }),
       safeExec('ps', ['aux', '--sort=-%cpu', '--no-headers'], { timeout: 5000 }),
     ]);
