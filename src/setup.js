@@ -1,7 +1,7 @@
 const { ChannelType, PermissionFlagsBits } = require('discord.js');
-const config = require('../../config');
-const { updateState, getState } = require('../utils/storage');
-const logger = require('../utils/logger');
+const config = require('../config');
+const { updateState, getState } = require('./utils/storage');
+const logger = require('./utils/logger');
 
 const MESSAGES_ORDER = [
   { key: 'liveStats', label: '📡 Live Stats — initializing...' },
