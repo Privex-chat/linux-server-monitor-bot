@@ -1,0 +1,47 @@
+{
+  "channelId": null,
+  "messageIds": {
+    "liveStats": null,
+    "dailySummary": null,
+    "weeklySummary": null,
+    "pm2Status": null,
+    "dockerStatus": null,
+    "securityStatus": null
+  },
+  "threadIds": {
+    "logs-system": null,
+    "logs-docker": null,
+    "logs-pm2": null,
+    "logs-auth": null,
+    "logs-security": null,
+    "logs-nginx": null,
+    "logs-power": null
+  },
+  "logOffsets": {
+    "auth": 0,
+    "syslog": 0,
+    "nginx_access": 0,
+    "nginx_error": 0,
+    "ufw": 0
+  },
+  "dailyAccumulator": {
+    "cpuSamples": [],
+    "ramSamples": [],
+    "powerSamples": [],
+    "tempSamples": [],
+    "networkInTotal": 0,
+    "networkOutTotal": 0,
+    "peakCpu": 0,
+    "peakRam": 0,
+    "peakPower": 0,
+    "peakTemp": 0,
+    "startTime": null
+  },
+  "weeklyAccumulator": {
+    "dailySummaries": [],
+    "startTime": null
+  },
+  "lastSecurityScan": null,
+  "lastDailySummary": null,
+  "lastWeeklySummary": null
+}
