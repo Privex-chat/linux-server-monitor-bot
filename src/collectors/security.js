@@ -75,7 +75,7 @@ async function getSSHInfo() {
   // Get unique IPs with failed attempts
   const ipResult = await safeExec('bash', [
     '-c',
-    "sudo grep 'Failed password' /var/log/auth.log | grep -oP '\\d+\\.\\d+\\.\\d+\\.\\d+' | sort | uniq -c | sort -rn | head -10",
+    "sudo grep 'Failed password' /var/log/auth.log | grep -oP 'from \\\\K[^ ]+' | sort | uniq -c | sort -rn | head -10",
   ], { timeout: 5000 });
 
   if (ipResult.success) {

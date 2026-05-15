@@ -133,7 +133,7 @@ registerCommand('ssh', {
   async execute(msg) {
     const [countResult, ipsResult] = await Promise.all([
       safeExec('bash', ['-c', "sudo grep -c 'Failed password' /var/log/auth.log 2>/dev/null || echo 0"]),
-      safeExec('bash', ['-c', "sudo grep 'Failed password' /var/log/auth.log | grep -oP '\\d+\\.\\d+\\.\\d+\\.\\d+' | sort | uniq -c | sort -rn | head -15"]),
+      safeExec('bash', ['-c', "sudo grep 'Failed password' /var/log/auth.log | grep -oP 'from \\K[^ ]+' | sort | uniq -c | sort -rn | head -15"]),
     ]);
 
     const count = countResult.stdout?.trim() || '0';
@@ -144,7 +144,7 @@ registerCommand('ssh', {
       .setColor(parseInt(count) > 50 ? config.COLORS.RED : config.COLORS.YELLOW)
       .addFields(
         { name: 'Total Failed', value: count, inline: true },
-        { name: 'Top IPs (count | IP)', value: `\`\`\`\n${ips.substring(0, 1000)}\n\`\`\`` },
+        { name: 'Top Attacker IPs', value: `\`\`\`\n${ips.substring(0, 1000)}\n\`\`\`` },
       )
       .setTimestamp();
 
@@ -460,7 +460,7 @@ registerCommand('explain', {
       safeExec('sudo', ['ufw', 'status', 'verbose'], { timeout: 5000 }),
       safeExec('ss', ['-tlnp'], { timeout: 5000 }),
       safeExec('ps', ['aux', '--sort=-%cpu', '--no-headers'], { timeout: 5000 }),
-      safeExec('bash', ['-c', "sudo grep 'Failed password' /var/log/auth.log | grep -oP '\\d+\\.\\d+\\.\\d+\\.\\d+' | sort | uniq -c | sort -rn | head -5"], { timeout: 5000 }),
+      safeExec('bash', ['-c', "sudo grep 'Failed password' /var/log/auth.log | grep -oP 'from \\K[^ ]+' | sort | uniq -c | sort -rn | head -5"], { timeout: 5000 }),
     ]);
 
     const sshFails = parseInt(sshResult.stdout?.trim()) || 0;
@@ -623,7 +623,7 @@ registerCommand('threats', {
   async execute(msg) {
     const [sshResult, ipsResult, f2bResult, procsResult] = await Promise.all([
       safeExec('bash', ['-c', "sudo grep -c 'Failed password' /var/log/auth.log 2>/dev/null || echo 0"]),
-      safeExec('bash', ['-c', "sudo grep 'Failed password' /var/log/auth.log | grep -oP '\\d+\\.\\d+\\.\\d+\\.\\d+' | sort | uniq -c | sort -rn | head -5"]),
+      safeExec('bash', ['-c', "sudo grep 'Failed password' /var/log/auth.log | grep -oP 'from \\K[^ ]+' | sort | uniq -c | sort -rn | head -5"]),
       safeExec('sudo', ['fail2ban-client', 'status', 'sshd'], { timeout: 5000 }),
       safeExec('ps', ['aux', '--sort=-%cpu', '--no-headers'], { timeout: 5000 }),
     ]);
