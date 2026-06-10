@@ -38,8 +38,10 @@ async function run() {
         }
       }
 
-      if (secData.ssh.failedCount >= config.SSH_FAIL_WARN_THRESHOLD) {
-        alertLines.push(`\n**SSH:** ${secData.ssh.failedCount} failed attempts`);
+      if (secData.fail2ban.available && secData.fail2ban.currentlyFailed >= config.SSH_FAIL_WARN_THRESHOLD) {
+        alertLines.push(`\n**SSH:** High rate of active failed attempts detected (${secData.fail2ban.currentlyFailed} currently unbanned).`);
+      } else if (!secData.fail2ban.available && secData.ssh.failedCount >= config.SSH_FAIL_CRIT_THRESHOLD) {
+        alertLines.push(`\n**SSH:** High number of total failed attempts detected. Consider installing Fail2Ban.`);
       }
 
       const alertMessage = alertLines.join('\n').substring(0, 2000);

@@ -217,7 +217,7 @@ function buildSecurityEmbed(sec) {
 
   // fail2ban
   if (sec.fail2ban.available) {
-    lines.push(`🚫 **fail2ban:** ${sec.fail2ban.totalBanned} IP(s) currently banned`);
+    lines.push(`🚫 **fail2ban:** ${sec.fail2ban.currentlyBanned} IP(s) currently banned (${sec.fail2ban.totalBanned} all-time)`);
     for (const jail of sec.fail2ban.jails) {
       lines.push(`   └ \`${jail.name}\`: ${jail.currentlyBanned} banned, ${jail.currentlyFailed} failing`);
     }

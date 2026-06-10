@@ -22,7 +22,11 @@ async function runRkhunter() {
     { timeout: 300000 } // 5 min timeout
   );
 
-  if (!success) {
+  // rkhunter often exits with a non-zero code when warnings are found.
+  // safeExec returns stdout even on failure, so we should check if we got output before assuming a crash.
+  const output = stdout.trim();
+
+  if (!success && !output) {
     if (stderr.includes('not found') || stderr.includes('No such file')) {
       logger.info('rkhunter not installed, skipping.');
       return;
@@ -31,7 +35,6 @@ async function runRkhunter() {
     return;
   }
 
-  const output = stdout.trim();
   if (output) {
     await thread.send(`🔍 **rkhunter scan — warnings found:**\n\`\`\`\n${output.substring(0, 1800)}\n\`\`\``);
 

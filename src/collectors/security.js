@@ -21,10 +21,17 @@ async function getSecurityStatus() {
   let levelEmoji = '🟢';
 
   const scores = [];
-  if (sshInfo.failedCount >= config.SSH_FAIL_CRIT_THRESHOLD) scores.push(3);
-  else if (sshInfo.failedCount >= config.SSH_FAIL_WARN_THRESHOLD) scores.push(2);
 
-  if (fail2banInfo.totalBanned > 20) scores.push(2);
+  // We no longer penalize for cumulative SSH failures or active bans,
+  // as this is expected internet noise for public servers.
+  // Instead, we only alert if there's a high number of active, unbanned failures.
+  if (fail2banInfo.available && fail2banInfo.currentlyFailed >= config.SSH_FAIL_WARN_THRESHOLD) {
+    scores.push(2);
+  } else if (!fail2banInfo.available && sshInfo.failedCount >= config.SSH_FAIL_CRIT_THRESHOLD) {
+    // If Fail2Ban is unavailable, we still use SSH failures but rely on the daily accumulator 
+    // to avoid real-time spam. We won't score it here unless it's extraordinarily high.
+  }
+
   if (suspiciousProcs.length > 0) scores.push(3);
   if (rootkitStatus.infected) scores.push(3);
   if (clamStatus.infected > 0) scores.push(3);
@@ -104,7 +111,7 @@ async function getSSHInfo() {
 }
 
 async function getFail2banInfo() {
-  const result = { available: false, jails: [], totalBanned: 0, totalFailed: 0 };
+  const result = { available: false, jails: [], currentlyBanned: 0, totalBanned: 0, currentlyFailed: 0 };
 
   const { stdout, success } = await safeExec('sudo', ['fail2ban-client', 'status'], { timeout: 5000 });
   if (!success) return result;
@@ -135,8 +142,9 @@ async function getFail2banInfo() {
     };
 
     result.jails.push(jailInfo);
-    result.totalBanned += jailInfo.currentlyBanned;
-    result.totalFailed += jailInfo.currentlyFailed;
+    result.currentlyBanned += jailInfo.currentlyBanned;
+    result.totalBanned += jailInfo.totalBanned;
+    result.currentlyFailed += jailInfo.currentlyFailed;
   }
 
   return result;
