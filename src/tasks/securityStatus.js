@@ -1,6 +1,6 @@
 const securityCollector = require('../collectors/security');
 const embeds = require('../formatters/embeds');
-const { getState } = require('../utils/storage');
+const { getState, updateState } = require('../utils/storage');
 const { alertMention } = require('../utils/alert');
 const config = require('../../config');
 const logger = require('../utils/logger');
@@ -42,9 +42,21 @@ async function run() {
         alertLines.push(`\n**SSH:** ${secData.ssh.failedCount} failed attempts`);
       }
 
+      const alertMessage = alertLines.join('\n').substring(0, 2000);
       const thread = resources.threads['logs-security'];
+      
       // Only send alert if the message is different from the last one
-      await thread.send(alertLines.join('\n').substring(0, 2000));
+      if (state.lastSecurityAlert !== alertMessage) {
+        await thread.send(alertMessage);
+        await updateState((s) => {
+          s.lastSecurityAlert = alertMessage;
+        });
+      }
+    } else if (!secData.shouldAlert && state.lastSecurityAlert) {
+      // Clear alert state if system returns to SECURE
+      await updateState((s) => {
+        s.lastSecurityAlert = null;
+      });
     }
 
     logger.debug('Security status updated.');

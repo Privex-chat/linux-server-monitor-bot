@@ -311,6 +311,13 @@ function buildDailySummaryEmbed(data) {
     lines.push(`🌡️ **Temp:** Avg ${avgTemp}°C │ Peak ${data.peakTemp.toFixed(1)}°C`);
   }
 
+  if (data.ufwBlocks > 0 || data.sshFailures > 0) {
+    const secLines = [];
+    if (data.ufwBlocks > 0) secLines.push(`🔥 ${data.ufwBlocks} UFW blocks`);
+    if (data.sshFailures > 0) secLines.push(`🔐 ${data.sshFailures} SSH failures`);
+    lines.push(`🛡️ **Security:** ${secLines.join(' │ ')}`);
+  }
+
   lines.push(`🌐 **Network:** ↓ ${formatBytes(data.networkInTotal)} │ ↑ ${formatBytes(data.networkOutTotal)}`);
   lines.push(`📊 **Samples:** ${data.cpuSamples.length}`);
 
@@ -361,6 +368,15 @@ function buildWeeklySummaryEmbed(data) {
     if (allTemp.length > 0) {
       const avg = (allTemp.reduce((a, b) => a + b, 0) / allTemp.length).toFixed(1);
       lines.push(`🌡️ **Temp:** Weekly Avg ${avg}°C`);
+    }
+
+    const totalUfw = data.dailySummaries.reduce((a, d) => a + (d.ufwBlocks || 0), 0);
+    const totalSsh = data.dailySummaries.reduce((a, d) => a + (d.sshFailures || 0), 0);
+    if (totalUfw > 0 || totalSsh > 0) {
+      const secLines = [];
+      if (totalUfw > 0) secLines.push(`🔥 ${totalUfw} UFW blocks`);
+      if (totalSsh > 0) secLines.push(`🔐 ${totalSsh} SSH failures`);
+      lines.push(`🛡️ **Security:** ${secLines.join(' │ ')}`);
     }
 
     const totalIn = data.dailySummaries.reduce((a, d) => a + (d.networkInTotal || 0), 0);

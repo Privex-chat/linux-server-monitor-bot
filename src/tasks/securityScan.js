@@ -74,11 +74,25 @@ async function runClamAVScan() {
     .filter((l) => l.includes('FOUND'))
     .map((l) => l.trim());
 
+  const state = require('../utils/storage').getState();
+  const infectedHash = infected.join('|');
+
   if (infected.length > 0) {
-    const alertMsg = `🦠 **ClamAV scan — ${infected.length} INFECTED file(s) found!**\n${alertMention()}\n\`\`\`\n${infected.slice(0, 20).join('\n')}\n\`\`\``;
-    await thread.send(alertMsg.substring(0, 2000));
+    if (state.lastClamAVInfected !== infectedHash) {
+      const alertMsg = `🦠 **ClamAV scan — ${infected.length} INFECTED file(s) found!**\n${alertMention()}\n\`\`\`\n${infected.slice(0, 20).join('\n')}\n\`\`\``;
+      await thread.send(alertMsg.substring(0, 2000));
+      
+      await require('../utils/storage').updateState((s) => {
+        s.lastClamAVInfected = infectedHash;
+      });
+    }
   } else {
     await thread.send('🦠 **ClamAV scan:** ✅ No infected files found.');
+    if (state.lastClamAVInfected) {
+      await require('../utils/storage').updateState((s) => {
+        s.lastClamAVInfected = null;
+      });
+    }
   }
 
   logger.info('ClamAV scan complete.');

@@ -45,6 +45,8 @@ async function runDaily() {
         peakTemp: data.peakTemp,
         networkInTotal: data.networkInTotal,
         networkOutTotal: data.networkOutTotal,
+        ufwBlocks: data.ufwBlocks || 0,
+        sshFailures: data.sshFailures || 0,
       });
 
       // Reset daily accumulator
@@ -59,6 +61,8 @@ async function runDaily() {
         peakRam: 0,
         peakPower: 0,
         peakTemp: 0,
+        ufwBlocks: 0,
+        sshFailures: 0,
         startTime: new Date().toISOString(),
       };
       s.lastDailySummary = new Date().toISOString();

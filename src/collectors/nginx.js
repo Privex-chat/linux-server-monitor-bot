@@ -3,12 +3,12 @@ const config = require('../../config');
 const fs = require('fs').promises;
 
 const ATTACK_PATTERNS = [
-  { pattern: /(\.\.|%2e%2e)/i, type: 'Path Traversal' },
+  { pattern: /(\.\.|%2e%2e)\//i, type: 'Path Traversal' },
   { pattern: /(union\s+select|select\s+.*\s+from|insert\s+into|drop\s+table|delete\s+from)/i, type: 'SQL Injection' },
   { pattern: /(<script|javascript:|onerror=|onload=)/i, type: 'XSS' },
   { pattern: /(\/etc\/passwd|\/etc\/shadow|\/proc\/self)/i, type: 'LFI' },
   { pattern: /(wp-admin|wp-login|xmlrpc|phpmyadmin|\.env|\.git)/i, type: 'Probe/Scan' },
-  { pattern: /(cmd=|exec=|system\(|passthru|shell_exec)/i, type: 'RCE Attempt' },
+  { pattern: /(system\(|passthru\(|shell_exec\(|eval\(|[?&]cmd=[^&]*(?:wget|curl|bash|sh|nc|ncat))/i, type: 'RCE Attempt' },
 ];
 
 async function getNginxStatus() {

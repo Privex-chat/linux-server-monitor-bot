@@ -100,7 +100,14 @@ async function watchAuthLog() {
       // Deduplicate repeated entries
       const deduped = [];
       const counts = new Map();
+      let failCountBatch = 0;
+
       for (const line of importantLines) {
+        if (/Failed password|Invalid user|BREAK-IN/i.test(line)) {
+          failCountBatch++;
+          continue; // Don't print failures to thread, they are too noisy
+        }
+
         const msgPart = line.replace(/^\S+\s+\S+\s+\S+\s+/, '').trim();
         if (counts.has(msgPart)) {
           counts.set(msgPart, counts.get(msgPart) + 1);
@@ -110,12 +117,20 @@ async function watchAuthLog() {
         }
       }
 
+      // Add to daily accumulator instead of alerting
+      if (failCountBatch > 0) {
+        await updateState((s) => {
+          if (s.dailyAccumulator.sshFailures === undefined) {
+            s.dailyAccumulator.sshFailures = 0;
+          }
+          s.dailyAccumulator.sshFailures += failCountBatch;
+        });
+      }
+
       const output = deduped.map((line) => {
         const msgPart = line.replace(/^\S+\s+\S+\s+\S+\s+/, '').trim();
         const count = counts.get(msgPart);
-        const prefix = /Failed password|Invalid user|BREAK-IN/i.test(line)
-          ? '🔴'
-          : /Accepted password|Accepted publickey/i.test(line)
+        const prefix = /Accepted password|Accepted publickey/i.test(line)
             ? '🟢'
             : /sudo:/i.test(line)
               ? '🟡'
@@ -123,15 +138,11 @@ async function watchAuthLog() {
         return count > 1 ? `${prefix} ${line} [×${count}]` : `${prefix} ${line}`;
       });
 
-      for (let i = 0; i < output.length; i += 10) {
-        const chunk = output.slice(i, i + 10);
-        await thread.send(`\`\`\`\n${chunk.join('\n').substring(0, 1900)}\n\`\`\``);
-      }
-
-      // Alert on high volume of failures
-      const failCount = importantLines.filter((l) => /Failed password|Invalid user/i.test(l)).length;
-      if (failCount >= 5) {
-        await thread.send(`⚠️ ${alertMention()} **${failCount} failed auth attempts** detected in recent log batch.`);
+      if (output.length > 0) {
+        for (let i = 0; i < output.length; i += 10) {
+          const chunk = output.slice(i, i + 10);
+          await thread.send(`\`\`\`\n${chunk.join('\n').substring(0, 1900)}\n\`\`\``);
+        }
       }
     }
 
@@ -293,11 +304,11 @@ async function watchNginxLogs() {
 
         if (success && stdout.trim()) {
           const attackPatterns = [
-            /(\.\.|%2e%2e)/i,
+            /(\.\.|%2e%2e)\//i,
             /(union\s+select|drop\s+table|insert\s+into)/i,
             /(<script|javascript:|onerror=)/i,
             /(\/etc\/passwd|\/proc\/self)/i,
-            /(cmd=|exec=|system\(|shell_exec)/i,
+            /(system\(|shell_exec\(|[?&]cmd=[^&]*(?:wget|curl|bash|sh|nc|ncat))/i,
           ];
 
           const lines = stdout.trim().split('\n');
@@ -468,14 +479,20 @@ async function watchUfwLog() {
 
       const blocks = allBlocks.filter((l) => !lanNoisePatterns.some((p) => p.test(l)));
 
-      if (blocks.length > 20) {
-        await thread.send(
-          `🔥 **UFW:** ${blocks.length} blocked connections in recent batch.\nTop blocked:\n\`\`\`\n${blocks.slice(-5).join('\n').substring(0, 1500)}\n\`\`\``
-        );
-      } else if (blocks.length > 0) {
-        await thread.send(
-          `🔥 **UFW blocks (${blocks.length}):**\n\`\`\`\n${blocks.join('\n').substring(0, 1900)}\n\`\`\``
-        );
+      if (blocks.length > 0) {
+        await updateState((s) => {
+          if (s.dailyAccumulator.ufwBlocks === undefined) {
+            s.dailyAccumulator.ufwBlocks = 0;
+          }
+          s.dailyAccumulator.ufwBlocks += blocks.length;
+        });
+
+        // Only alert on massive spikes
+        if (blocks.length >= 100) {
+          await thread.send(
+            `🔥 **UFW SPIKE:** ${blocks.length} blocked connections in recent batch.\nTop blocked:\n\`\`\`\n${blocks.slice(-5).join('\n').substring(0, 1500)}\n\`\`\``
+          );
+        }
       }
     }
 
