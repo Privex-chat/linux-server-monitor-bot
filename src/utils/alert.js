@@ -20,6 +20,14 @@ function alertMention() {
   return parts.join(' ');
 }
 
+function alertAllowedMentions() {
+  return {
+    parse: [],
+    users: config.ALERT_USER_ID ? [config.ALERT_USER_ID] : [],
+    roles: config.ALERT_ROLE_ID ? [config.ALERT_ROLE_ID] : [],
+  };
+}
+
 /**
  * Validates that at least one alert target is configured.
  * Call at startup.
@@ -31,4 +39,4 @@ function validateAlertConfig() {
   return null;
 }
 
-module.exports = { alertMention, validateAlertConfig };
+module.exports = { alertMention, alertAllowedMentions, validateAlertConfig };

@@ -119,8 +119,6 @@ $BOT_USER ALL=(ALL) NOPASSWD: /usr/bin/grep -c * $AUTH_LOG
 $BOT_USER ALL=(ALL) NOPASSWD: /usr/bin/grep -c * /var/log/ufw.log
 
 # ── Bash (for piped log commands) ──
-$BOT_USER ALL=(ALL) NOPASSWD: /usr/bin/bash -c sudo grep *
-$BOT_USER ALL=(ALL) NOPASSWD: /usr/bin/bash -c sudo tail *
 
 # ── Security tools ──
 $BOT_USER ALL=(ALL) NOPASSWD: /usr/sbin/ufw status *
@@ -130,6 +128,7 @@ $BOT_USER ALL=(ALL) NOPASSWD: /usr/bin/fail2ban-client set * banip *
 $BOT_USER ALL=(ALL) NOPASSWD: /usr/bin/fail2ban-client set * unbanip *
 $BOT_USER ALL=(ALL) NOPASSWD: /usr/bin/rkhunter --check *
 $BOT_USER ALL=(ALL) NOPASSWD: /usr/bin/clamscan *
+$BOT_USER ALL=(ALL) NOPASSWD: /usr/sbin/sshd -T
 
 # ── System info ──
 $BOT_USER ALL=(ALL) NOPASSWD: /usr/bin/last *

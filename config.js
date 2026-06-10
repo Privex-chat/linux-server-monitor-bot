@@ -38,9 +38,27 @@ module.exports = {
   PSU_WATTAGE: parseInt(process.env.PSU_WATTAGE) || 450,
 
   // ── Security thresholds ──────────────────────────────────
-  SSH_FAIL_WARN_THRESHOLD: parseInt(process.env.SSH_FAIL_WARN_THRESHOLD) || 10,
-  SSH_FAIL_CRIT_THRESHOLD: parseInt(process.env.SSH_FAIL_CRIT_THRESHOLD) || 50,
-  EXPECTED_PORTS: process.env.EXPECTED_PORTS ? process.env.EXPECTED_PORTS.split(',').map(Number) : [22, 53, 80, 443],
+  SSH_FAIL_WARN_THRESHOLD: parseInt(process.env.SSH_FAIL_WARN_THRESHOLD, 10) || 10,
+  SSH_FAIL_CRIT_THRESHOLD: parseInt(process.env.SSH_FAIL_CRIT_THRESHOLD, 10) || 50,
+  EXPECTED_PORTS: process.env.EXPECTED_PORTS
+    ? process.env.EXPECTED_PORTS.split(',')
+        .map((p) => parseInt(p.trim(), 10))
+        .filter(Number.isInteger)
+    : [22, 53, 80, 443],
+
+  // Noise-aware security windows. Cumulative internet scanner noise is
+  // summarized, while recent spikes and missing protections still alert.
+  SECURITY_ALERT_COOLDOWN_MS: parseInt(process.env.SECURITY_ALERT_COOLDOWN_MS, 10) || 30 * 60 * 1000,
+  SECURITY_EVENT_RETENTION_MS: parseInt(process.env.SECURITY_EVENT_RETENTION_MS, 10) || 60 * 60 * 1000,
+  SSH_FAIL_WINDOW_MS: parseInt(process.env.SSH_FAIL_WINDOW_MS, 10) || 15 * 60 * 1000,
+  SSH_FAIL_WINDOW_WARN_THRESHOLD: parseInt(process.env.SSH_FAIL_WINDOW_WARN_THRESHOLD, 10) || 40,
+  SSH_FAIL_WINDOW_CRIT_THRESHOLD: parseInt(process.env.SSH_FAIL_WINDOW_CRIT_THRESHOLD, 10) || 150,
+  SSH_FAIL_PER_IP_WARN_THRESHOLD: parseInt(process.env.SSH_FAIL_PER_IP_WARN_THRESHOLD, 10) || 15,
+  SSH_FAIL_PER_IP_CRIT_THRESHOLD: parseInt(process.env.SSH_FAIL_PER_IP_CRIT_THRESHOLD, 10) || 60,
+  UFW_BLOCK_BATCH_WARN_THRESHOLD: parseInt(process.env.UFW_BLOCK_BATCH_WARN_THRESHOLD, 10) || 250,
+  UFW_BLOCK_BATCH_CRIT_THRESHOLD: parseInt(process.env.UFW_BLOCK_BATCH_CRIT_THRESHOLD, 10) || 1000,
+  NGINX_ATTACK_BATCH_WARN_THRESHOLD: parseInt(process.env.NGINX_ATTACK_BATCH_WARN_THRESHOLD, 10) || 25,
+  NGINX_ATTACK_BATCH_CRIT_THRESHOLD: parseInt(process.env.NGINX_ATTACK_BATCH_CRIT_THRESHOLD, 10) || 100,
 
   // ── Watched processes (comma-separated in .env) ──────────
   WATCHED_PM2_IDS: process.env.WATCHED_PM2_IDS ? process.env.WATCHED_PM2_IDS.split(',').map(Number) : [],
@@ -72,6 +90,7 @@ module.exports = {
   COOLDOWN_DEFAULT_MS: 3000,
   COOLDOWN_DANGEROUS_MS: 30000,
   COOLDOWN_HEAVY_MS: 10000,
+  ENABLE_REMOTE_SHELL: process.env.ENABLE_REMOTE_SHELL === 'true',
 
   // ── Embed colors ─────────────────────────────────────────
   COLORS: {

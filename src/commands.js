@@ -1,9 +1,12 @@
 const { EmbedBuilder } = require('discord.js');
+const net = require('net');
 const config = require('../config');
 const logger = require('./utils/logger');
 const { safeExec } = require('./utils/exec');
 const { getState } = require('./utils/storage');
 const logPaths = require('./utils/logPaths');
+const { tailLog } = require('./utils/logReader');
+const { codeBlock } = require('./utils/discord');
 
 const PREFIX = '!';
 
@@ -66,6 +69,27 @@ function isValidServiceName(name) {
   return SAFE_NAME_RE.test(name) && name.length <= 100;
 }
 
+function isValidIp(ip) {
+  return typeof ip === 'string' && net.isIP(ip) !== 0;
+}
+
+function isPrivateOrLocalIp(ip) {
+  if (!isValidIp(ip)) return true;
+  const normalized = ip.toLowerCase();
+  if (
+    normalized === '::1' ||
+    normalized.startsWith('fe80:') ||
+    normalized.startsWith('fc') ||
+    normalized.startsWith('fd')
+  ) {
+    return true;
+  }
+  if (normalized.startsWith('127.') || normalized.startsWith('10.') || normalized.startsWith('169.254.')) return true;
+  if (normalized.startsWith('192.168.')) return true;
+  if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(normalized)) return true;
+  return false;
+}
+
 // ── Dangerous command blocklist ───────────────────────────
 const BLOCKED_COMMANDS = [
   { pattern: /rm\s+(-[^\s]*\s+)*\/(\s|$)/, reason: 'Recursive delete of root filesystem' },
@@ -86,11 +110,15 @@ const BLOCKED_COMMANDS = [
   { pattern: />\s*\/etc\//, reason: 'Overwriting system config files' },
   { pattern: />\s*\/boot\//, reason: 'Overwriting boot files' },
   { pattern: /\bchmod\s+[0-7]*777\b/, reason: 'World-writable permissions' },
+  { pattern: /\bchmod\s+.*\b777\b/, reason: 'World-writable permissions' },
   { pattern: /\bchown\s.*\/etc\//, reason: 'Changing ownership of system files' },
   { pattern: /LD_PRELOAD=/, reason: 'Library injection' },
   { pattern: /crontab\s.*-r\b/, reason: 'Crontab removal' },
   { pattern: /visudo/, reason: 'Sudoers modification' },
   { pattern: />\s*\/dev\/[sh]d/, reason: 'Raw device write' },
+  { pattern: /\biptables\s+-F\b/, reason: 'Flushing firewall rules' },
+  { pattern: /\bufw\s+disable\b/, reason: 'Disabling firewall' },
+  { pattern: /\bsetenforce\s+0\b/, reason: 'Disabling SELinux enforcement' },
   { pattern: /\bwipe\b/, reason: 'Disk wipe utility' },
   { pattern: /\bshred\b/, reason: 'Secure file deletion' },
 ];
@@ -250,8 +278,8 @@ registerCommand('ssh', {
       // Extract IPs from "from <ip>" pattern in log lines
       const ipCounts = {};
       for (const line of lines) {
-        const match = line.match(/from\s+([\d.]+)/);
-        if (match) ipCounts[match[1]] = (ipCounts[match[1]] || 0) + 1;
+        const match = line.match(/from\s+([0-9a-f:.]+)/i);
+        if (match && isValidIp(match[1])) ipCounts[match[1]] = (ipCounts[match[1]] || 0) + 1;
       }
       const sorted = Object.entries(ipCounts)
         .sort((a, b) => b[1] - a[1])
@@ -283,7 +311,7 @@ registerCommand('ban', {
   cooldown: config.COOLDOWN_HEAVY_MS,
   async execute(msg, args) {
     const ip = args[0];
-    if (!ip || !/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) {
+    if (!isValidIp(ip) || isPrivateOrLocalIp(ip)) {
       return msg.reply('❌ Usage: `!ban <ip>` — provide a valid IPv4 address.');
     }
     const { stdout, success } = await safeExec('sudo', ['fail2ban-client', 'set', 'sshd', 'banip', ip]);
@@ -298,7 +326,7 @@ registerCommand('unban', {
   category: 'Security',
   async execute(msg, args) {
     const ip = args[0];
-    if (!ip || !/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) {
+    if (!isValidIp(ip)) {
       return msg.reply('❌ Usage: `!unban <ip>` — provide a valid IPv4 address.');
     }
     const { stdout, success } = await safeExec('sudo', ['fail2ban-client', 'set', 'sshd', 'unbanip', ip]);
@@ -476,6 +504,16 @@ registerCommand('nginx', {
 
 // ── Shared exec runner with confirmation ─────────────────
 async function runWithConfirmation(msg, command, useSudo) {
+  if (!config.ENABLE_REMOTE_SHELL) {
+    return msg.reply(
+      '🚫 Remote shell is disabled. Set `ENABLE_REMOTE_SHELL=true` in `.env` only if you accept the risk.'
+    );
+  }
+
+  if (command.length > 500) {
+    return msg.reply('🚫 Command is too long. Keep remote shell commands under 500 characters.');
+  }
+
   const blockReason = checkBlockedCommand(command);
   if (blockReason) {
     return msg.reply(`🚫 Blocked: ${blockReason}`);
@@ -595,7 +633,7 @@ registerCommand('logs', {
       );
     }
 
-    const { stdout } = await safeExec('sudo', ['tail', `-${lines}`, logPath], { timeout: 5000 });
+    const { stdout } = await tailLog(logPath, lines, 5000);
     await msg.reply(
       `📋 **${logName}** (last ${lines} lines):\n\`\`\`\n${(stdout || 'Empty/no access').substring(0, 1900)}\n\`\`\``
     );
@@ -906,7 +944,7 @@ registerCommand('whois', {
   cooldown: config.COOLDOWN_HEAVY_MS,
   async execute(msg, args) {
     const ip = args[0];
-    if (!ip || !/^[\d.]+$/.test(ip)) {
+    if (!isValidIp(ip)) {
       return msg.reply('❌ Usage: `!whois <ip>` — example: `!whois 192.168.1.1`');
     }
 
@@ -916,12 +954,11 @@ registerCommand('whois', {
     const [whoisResult, geoResult] = await Promise.all([
       safeExec('whois', [ip], { timeout: 10000 }),
       safeExec(
-        'bash',
-        [
-          '-c',
-          `curl -s "http://ip-api.com/json/${ip}?fields=status,country,regionName,city,isp,org,as,query" 2>/dev/null`,
-        ],
-        { timeout: 10000 }
+        'curl',
+        ['-fsS', `http://ip-api.com/json/${ip}?fields=status,country,regionName,city,isp,org,as,query`],
+        {
+          timeout: 10000,
+        }
       ),
     ]);
 
@@ -958,7 +995,7 @@ registerCommand('whois', {
 
     // Check if this IP has attacked us
     const whoisAuthLog = logPaths.resolve().auth || '/dev/null';
-    const attackResult = await safeExec('sudo', ['grep', '-c', ip, whoisAuthLog], { timeout: 5000 });
+    const attackResult = await safeExec('sudo', ['grep', '-F', '-c', '--', ip, whoisAuthLog], { timeout: 5000 });
     const attackCount = parseInt(attackResult.stdout?.trim()) || 0;
     if (attackCount > 0) {
       lines.push(`\n⚔️ **This IP appears ${attackCount} time(s) in your auth log.**`);
@@ -982,6 +1019,113 @@ registerCommand('whois', {
 });
 
 // ── Error sanitization ───────────────────────────────────
+// Hardened overrides for commands that display untrusted logs or use IP input.
+registerCommand('logs', {
+  description: 'View recent system logs',
+  usage: '!logs [syslog|auth|nginx|nginx-access|ufw] [lines]',
+  category: 'System',
+  async execute(msg, args) {
+    const paths = logPaths.resolve();
+    const logMap = {
+      syslog: paths.syslog,
+      auth: paths.auth,
+      nginx: paths.nginxError,
+      'nginx-access': paths.nginxAccess,
+      ufw: paths.ufw,
+    };
+
+    const logName = args[0]?.toLowerCase() || 'syslog';
+    const lines = Math.min(Math.max(parseInt(args[1], 10) || 20, 1), 50);
+    const logPath = logMap[logName];
+
+    if (!logPath) {
+      return msg.reply(
+        `❌ Unknown log. Available: ${Object.keys(logMap)
+          .map((k) => `\`${k}\``)
+          .join(', ')}`
+      );
+    }
+
+    const { stdout } = await tailLog(logPath, lines, 5000);
+    await msg.reply(`📋 **${logName}** (last ${lines} lines):\n${codeBlock(stdout || 'Empty/no access', 1900)}`);
+  },
+});
+
+registerCommand('whois', {
+  description: 'Look up info about an IP address',
+  usage: '!whois <ip>',
+  aliases: ['lookup', 'ip'],
+  category: 'Explain',
+  cooldown: config.COOLDOWN_HEAVY_MS,
+  async execute(msg, args) {
+    const ip = args[0];
+    if (!isValidIp(ip)) {
+      return msg.reply('❌ Usage: `!whois <ip>` - provide a valid IPv4 or IPv6 address.');
+    }
+
+    const reply = await msg.reply(`🔍 Looking up \`${ip}\`...`);
+    const fields = 'status,country,regionName,city,isp,org,as,query';
+    const [whoisResult, geoResult] = await Promise.all([
+      safeExec('whois', [ip], { timeout: 10000 }),
+      safeExec('curl', ['-fsS', `http://ip-api.com/json/${ip}?fields=${fields}`], { timeout: 10000 }),
+    ]);
+
+    const lines = [];
+
+    if (geoResult.success && geoResult.stdout?.trim()) {
+      try {
+        const geo = JSON.parse(geoResult.stdout);
+        if (geo.status === 'success') {
+          lines.push(`🌍 **Location:** ${geo.city || '?'}, ${geo.regionName || '?'}, ${geo.country || '?'}`);
+          lines.push(`🏢 **ISP:** ${geo.isp || 'Unknown'}`);
+          lines.push(`🏛️ **Organization:** ${geo.org || 'Unknown'}`);
+          lines.push(`📡 **Network:** ${geo.as || 'Unknown'}`);
+        }
+      } catch {
+        /* ignore malformed lookup output */
+      }
+    }
+
+    if (whoisResult.success && whoisResult.stdout) {
+      const abuseMatch = whoisResult.stdout.match(/abuse.*?:\s*(.*)/im);
+      const netNameMatch =
+        whoisResult.stdout.match(/NetName:\s*(.*)/im) || whoisResult.stdout.match(/netname:\s*(.*)/im);
+
+      if (netNameMatch) lines.push(`🏷️ **Network Name:** ${netNameMatch[1].trim().substring(0, 120)}`);
+      if (abuseMatch) lines.push(`📧 **Report abuse to:** ${abuseMatch[1].trim().substring(0, 120)}`);
+    }
+
+    if (lines.length === 0) {
+      lines.push(isPrivateOrLocalIp(ip) ? 'This is a private/local address.' : 'Could not find public lookup data.');
+    }
+
+    const authLog = logPaths.resolve().auth || '/dev/null';
+    const attackResult = await safeExec('sudo', ['grep', '-F', '-c', '--', ip, authLog], { timeout: 5000 });
+    const attackCount = parseInt(attackResult.stdout?.trim(), 10) || 0;
+    if (attackCount > 0) {
+      lines.push(`\n⚔️ **This IP appears ${attackCount} time(s) in your auth log.**`);
+    }
+
+    const banResult = await safeExec('sudo', ['fail2ban-client', 'status', 'sshd'], { timeout: 5000 });
+    if (banResult.success && banResult.stdout?.split(/\s+/).includes(ip)) {
+      lines.push('🚫 **This IP is currently banned by fail2ban.**');
+    }
+
+    const embed = new EmbedBuilder()
+      .setTitle(`🔍 IP Lookup: ${ip}`)
+      .setColor(config.COLORS.BLUE)
+      .setDescription(lines.join('\n').substring(0, 3900))
+      .setFooter({
+        text: isPrivateOrLocalIp(ip)
+          ? 'Private/local IPs cannot be banned with !ban'
+          : 'Use !ban <ip> to block this address',
+      })
+      .setTimestamp();
+
+    await reply.edit({ content: null, embeds: [embed] });
+  },
+});
+
 function sanitizeError(message) {
   const patterns = [
     [/\/home\/\S+/g, '/home/***'],

@@ -47,15 +47,26 @@ const DEFAULT_STATE = {
     peakRam: 0,
     peakPower: 0,
     peakTemp: 0,
+    ufwBlocks: 0,
+    sshFailures: 0,
+    nginxAttacks: 0,
     startTime: null,
   },
   weeklyAccumulator: {
     dailySummaries: [],
     startTime: null,
   },
+  security: {
+    recentSshFailures: [],
+    recentUfwBlocks: [],
+    recentNginxAttacks: [],
+    alertCache: {},
+    lastSshFailedCount: null,
+  },
   lastSecurityScan: null,
   lastDailySummary: null,
   lastWeeklySummary: null,
+  lastSecurityAlert: null,
 };
 
 async function loadState() {
@@ -66,7 +77,14 @@ async function loadState() {
     stateCache = JSON.parse(raw);
 
     // Deep-merge with defaults so new keys are always present
-    for (const section of ['messageIds', 'threadIds', 'logOffsets', 'dailyAccumulator', 'weeklyAccumulator']) {
+    for (const section of [
+      'messageIds',
+      'threadIds',
+      'logOffsets',
+      'dailyAccumulator',
+      'weeklyAccumulator',
+      'security',
+    ]) {
       stateCache[section] = { ...DEFAULT_STATE[section], ...(stateCache[section] || {}) };
     }
     for (const key of Object.keys(DEFAULT_STATE)) {

@@ -2,7 +2,7 @@ const { safeExec, readProcFile } = require('../utils/exec');
 
 describe('safeExec', () => {
   test('runs command with array args (execFile path)', async () => {
-    const result = await safeExec('echo', ['hello']);
+    const result = await safeExec(process.execPath, ['-e', "console.log('hello')"]);
     expect(result.success).toBe(true);
     expect(result.stdout.trim()).toBe('hello');
     expect(result.stderr).toBe('');
@@ -16,18 +16,18 @@ describe('safeExec', () => {
 
   test('respects timeout option', async () => {
     // Sleep should time out
-    const result = await safeExec('sleep', ['10'], { timeout: 100 });
+    const result = await safeExec(process.execPath, ['-e', 'setTimeout(() => {}, 10000)'], { timeout: 100 });
     expect(result.success).toBe(false);
   }, 10000);
 
   test('handles empty args (shell exec path)', async () => {
-    const result = await safeExec('echo hello world', []);
+    const result = await safeExec(`"${process.execPath}" -e "console.log('hello world')"`, []);
     expect(result.success).toBe(true);
     expect(result.stdout.trim()).toBe('hello world');
   });
 
   test('returns stdout and stderr separately', async () => {
-    const result = await safeExec('bash', ['-c', 'echo out; echo err >&2']);
+    const result = await safeExec(process.execPath, ['-e', "console.log('out'); console.error('err')"]);
     expect(result.success).toBe(true);
     expect(result.stdout.trim()).toBe('out');
     expect(result.stderr.trim()).toBe('err');

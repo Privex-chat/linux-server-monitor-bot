@@ -49,11 +49,16 @@ if [ ! -f /etc/fail2ban/jail.local ]; then
 ignoreip = 127.0.0.1/8 ::1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
 # Ban for 1 hour
 bantime  = 1h
+# Escalate repeat offenders automatically
+bantime.increment = true
+bantime.factor = 2
+bantime.maxtime = 1w
 # Within a 10 minute window
 findtime = 10m
 # If they fail 5 times
 maxretry = 5
 backend  = systemd
+usedns   = no
 # Use UFW for banning (supports IPv4 and IPv6 natively)
 banaction = ufw
 
@@ -62,6 +67,7 @@ enabled = true
 port    = ssh
 logpath = /var/log/auth.log
 maxretry = 5
+mode = aggressive
 
 [nginx-http-auth]
 enabled  = true

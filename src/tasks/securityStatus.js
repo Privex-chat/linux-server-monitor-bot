@@ -1,9 +1,9 @@
 const securityCollector = require('../collectors/security');
 const embeds = require('../formatters/embeds');
 const { getState, updateState } = require('../utils/storage');
-const { alertMention } = require('../utils/alert');
-const config = require('../../config');
+const { alertMention, alertAllowedMentions } = require('../utils/alert');
 const logger = require('../utils/logger');
+const { shouldSendAlert, markAlertSent, clearAlert } = require('../utils/securityState');
 
 let resources = null;
 
@@ -25,39 +25,12 @@ async function run() {
     const msg = await resources.channel.messages.fetch(messageId);
     await msg.edit({ content: null, embeds: [secEmbed] });
 
-    // Alert on WARNING or CRITICAL
     if (secData.shouldAlert && resources.threads['logs-security']) {
-      const alertLines = [];
-      alertLines.push(`${secData.levelEmoji} **Security Alert: ${secData.level}**`);
-      alertLines.push(alertMention());
-
-      if (secData.suspiciousProcs.length > 0) {
-        alertLines.push(`\n**Suspicious Processes:**`);
-        for (const p of secData.suspiciousProcs) {
-          alertLines.push(`• PID \`${p.pid}\` — ${p.reason}: \`${p.command.substring(0, 80)}\``);
-        }
-      }
-
-      if (secData.fail2ban.available && secData.fail2ban.currentlyFailed >= config.SSH_FAIL_WARN_THRESHOLD) {
-        alertLines.push(`\n**SSH:** High rate of active failed attempts detected (${secData.fail2ban.currentlyFailed} currently unbanned).`);
-      } else if (!secData.fail2ban.available && secData.ssh.failedCount >= config.SSH_FAIL_CRIT_THRESHOLD) {
-        alertLines.push(`\n**SSH:** High number of total failed attempts detected. Consider installing Fail2Ban.`);
-      }
-
-      const alertMessage = alertLines.join('\n').substring(0, 2000);
-      const thread = resources.threads['logs-security'];
-      
-      // Only send alert if the message is different from the last one
-      if (state.lastSecurityAlert !== alertMessage) {
-        await thread.send(alertMessage);
-        await updateState((s) => {
-          s.lastSecurityAlert = alertMessage;
-        });
-      }
+      await maybeSendSecurityAlert(secData, state, resources.threads['logs-security']);
     } else if (!secData.shouldAlert && state.lastSecurityAlert) {
-      // Clear alert state if system returns to SECURE
       await updateState((s) => {
         s.lastSecurityAlert = null;
+        clearAlert(s, 'security-status');
       });
     }
 
@@ -65,6 +38,44 @@ async function run() {
   } catch (err) {
     logger.error(`Security update error: ${err.message}`);
   }
+}
+
+async function maybeSendSecurityAlert(secData, state, thread) {
+  const alertFindings = secData.findings.filter(
+    (finding) => finding.level === 'WARNING' || finding.level === 'CRITICAL'
+  );
+  if (alertFindings.length === 0) return;
+
+  const fingerprint = alertFindings
+    .map((finding) => `${finding.level}:${finding.key}`)
+    .sort()
+    .join('|');
+
+  if (!shouldSendAlert(state, 'security-status', fingerprint, secData.level)) {
+    return;
+  }
+
+  const alertLines = [];
+  alertLines.push(`${secData.levelEmoji} **Security Alert: ${secData.level}**`);
+  alertLines.push(alertMention());
+
+  for (const finding of alertFindings.slice(0, 8)) {
+    alertLines.push(`\n**${finding.title}**`);
+    alertLines.push(finding.detail);
+    if (finding.action) alertLines.push(`Action: ${finding.action}`);
+  }
+
+  if (alertFindings.length > 8) {
+    alertLines.push(`\n...and ${alertFindings.length - 8} more finding(s).`);
+  }
+
+  const alertMessage = alertLines.join('\n').substring(0, 2000);
+  await thread.send({ content: alertMessage, allowedMentions: alertAllowedMentions() });
+
+  await updateState((s) => {
+    s.lastSecurityAlert = alertMessage;
+    markAlertSent(s, 'security-status', fingerprint, secData.level);
+  });
 }
 
 module.exports = { init, run };

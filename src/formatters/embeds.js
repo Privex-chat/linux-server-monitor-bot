@@ -197,90 +197,6 @@ function buildDockerEmbed(dockerData) {
     .setTimestamp();
 }
 
-// ── Security Status Embed ────────────────────────────────
-
-function buildSecurityEmbed(sec) {
-  const lines = [];
-
-  lines.push(`**Status:** ${sec.levelEmoji} ${sec.level}`);
-  lines.push('');
-
-  // SSH
-  lines.push(`🔐 **SSH:** ${sec.ssh.failedCount} failed attempts`);
-  if (sec.ssh.failedIPs.length > 0) {
-    const topIPs = sec.ssh.failedIPs
-      .slice(0, 3)
-      .map((i) => `\`${i.ip}\` (${i.count}x)`)
-      .join(', ');
-    lines.push(`   Top IPs: ${topIPs}`);
-  }
-
-  // fail2ban
-  if (sec.fail2ban.available) {
-    lines.push(`🚫 **fail2ban:** ${sec.fail2ban.currentlyBanned} IP(s) currently banned (${sec.fail2ban.totalBanned} all-time)`);
-    for (const jail of sec.fail2ban.jails) {
-      lines.push(`   └ \`${jail.name}\`: ${jail.currentlyBanned} banned, ${jail.currentlyFailed} failing`);
-    }
-  } else {
-    lines.push('🚫 **fail2ban:** Not installed');
-  }
-
-  // UFW
-  if (sec.ufw.available) {
-    lines.push(`🔥 **UFW:** ${sec.ufw.status} │ ${sec.ufw.blockedCount} blocks logged`);
-  } else {
-    lines.push('🔥 **UFW:** Not available');
-  }
-
-  // Open ports
-  if (sec.openPorts.unexpected.length > 0) {
-    const portList = sec.openPorts.unexpected.map((p) => `\`${p.port}\``).join(', ');
-    lines.push(`🌐 **Unexpected ports:** ${portList}`);
-  } else {
-    lines.push(`🌐 **Open ports:** ${sec.openPorts.ports.length} (all expected)`);
-  }
-
-  // Suspicious processes
-  if (sec.suspiciousProcs.length > 0) {
-    lines.push(`👀 **Suspicious processes:** ${sec.suspiciousProcs.length} detected!`);
-    for (const p of sec.suspiciousProcs.slice(0, 3)) {
-      lines.push(`   └ PID \`${p.pid}\`: ${p.reason} — \`${p.command.substring(0, 60)}\``);
-    }
-  } else {
-    lines.push('👀 **Suspicious procs:** None');
-  }
-
-  // Rootkit
-  if (sec.rootkit.available) {
-    const rkStatus = sec.rootkit.infected ? '⚠️ INFECTED' : `✅ Clean (${sec.rootkit.warnings} warnings)`;
-    lines.push(`🔍 **rkhunter:** ${rkStatus}`);
-  } else {
-    lines.push('🔍 **rkhunter:** Not installed');
-  }
-
-  // ClamAV
-  if (sec.clamav.available) {
-    const avStatus = sec.clamav.infected > 0 ? `⚠️ ${sec.clamav.infected} INFECTED` : '✅ Clean';
-    lines.push(`🦠 **ClamAV:** ${avStatus}`);
-  } else {
-    lines.push('🦠 **ClamAV:** Not installed');
-  }
-
-  const colorMap = {
-    SECURE: config.COLORS.GREEN,
-    ADVISORY: config.COLORS.YELLOW,
-    WARNING: config.COLORS.ORANGE,
-    CRITICAL: config.COLORS.RED,
-  };
-
-  return new EmbedBuilder()
-    .setTitle('🛡️  SECURITY STATUS')
-    .setColor(colorMap[sec.level] || config.COLORS.DARK)
-    .setDescription(lines.join('\n'))
-    .setFooter({ text: 'Refreshes every 5 minutes' })
-    .setTimestamp();
-}
-
 // ── Daily Summary Embed ──────────────────────────────────
 
 function buildDailySummaryEmbed(data) {
@@ -311,10 +227,11 @@ function buildDailySummaryEmbed(data) {
     lines.push(`🌡️ **Temp:** Avg ${avgTemp}°C │ Peak ${data.peakTemp.toFixed(1)}°C`);
   }
 
-  if (data.ufwBlocks > 0 || data.sshFailures > 0) {
+  if (data.ufwBlocks > 0 || data.sshFailures > 0 || data.nginxAttacks > 0) {
     const secLines = [];
     if (data.ufwBlocks > 0) secLines.push(`🔥 ${data.ufwBlocks} UFW blocks`);
     if (data.sshFailures > 0) secLines.push(`🔐 ${data.sshFailures} SSH failures`);
+    if (data.nginxAttacks > 0) secLines.push(`🛡️ ${data.nginxAttacks} web probes`);
     lines.push(`🛡️ **Security:** ${secLines.join(' │ ')}`);
   }
 
@@ -372,10 +289,12 @@ function buildWeeklySummaryEmbed(data) {
 
     const totalUfw = data.dailySummaries.reduce((a, d) => a + (d.ufwBlocks || 0), 0);
     const totalSsh = data.dailySummaries.reduce((a, d) => a + (d.sshFailures || 0), 0);
-    if (totalUfw > 0 || totalSsh > 0) {
+    const totalNginxAttacks = data.dailySummaries.reduce((a, d) => a + (d.nginxAttacks || 0), 0);
+    if (totalUfw > 0 || totalSsh > 0 || totalNginxAttacks > 0) {
       const secLines = [];
       if (totalUfw > 0) secLines.push(`🔥 ${totalUfw} UFW blocks`);
       if (totalSsh > 0) secLines.push(`🔐 ${totalSsh} SSH failures`);
+      if (totalNginxAttacks > 0) secLines.push(`🛡️ ${totalNginxAttacks} web probes`);
       lines.push(`🛡️ **Security:** ${secLines.join(' │ ')}`);
     }
 
@@ -392,11 +311,112 @@ function buildWeeklySummaryEmbed(data) {
     .setTimestamp();
 }
 
+function buildSecurityEmbedHardened(sec) {
+  const lines = [];
+
+  lines.push(`**Status:** ${sec.levelEmoji} ${sec.level}`);
+  lines.push('');
+
+  const recentSsh = sec.ssh.recentWindow || { count: 0, unique: 0, top: [] };
+  lines.push(`🔐 **SSH:** ${recentSsh.count} recent failure(s) / ${sec.ssh.failedCount} cumulative`);
+  if (recentSsh.top.length > 0) {
+    const topRecent = recentSsh.top
+      .slice(0, 3)
+      .map((i) => `\`${i.ip}\` (${i.count}x)`)
+      .join(', ');
+    lines.push(`   Recent top IPs: ${topRecent}`);
+  } else if (sec.ssh.failedIPs.length > 0) {
+    const topIPs = sec.ssh.failedIPs
+      .slice(0, 3)
+      .map((i) => `\`${i.ip}\` (${i.count}x)`)
+      .join(', ');
+    lines.push(`   Cumulative top IPs: ${topIPs}`);
+  }
+  if (sec.ssh.config?.available) {
+    lines.push(`   sshd: password=${sec.ssh.config.passwordAuthentication}, root=${sec.ssh.config.permitRootLogin}`);
+  }
+
+  if (sec.fail2ban.available) {
+    lines.push(
+      `🚫 **fail2ban:** ${sec.fail2ban.currentlyBanned} IP(s) banned now (${sec.fail2ban.totalBanned} all-time)`
+    );
+    for (const jail of sec.fail2ban.jails.slice(0, 5)) {
+      lines.push(`   - \`${jail.name}\`: ${jail.currentlyBanned} banned, ${jail.currentlyFailed} failing`);
+    }
+  } else {
+    lines.push('🚫 **fail2ban:** Not installed/running');
+  }
+
+  if (sec.ufw.available) {
+    const recentBlocks = sec.ufw.recentWindow?.count || 0;
+    lines.push(`🔥 **UFW:** ${sec.ufw.status} | ${recentBlocks} recent / ${sec.ufw.blockedCount} logged blocks`);
+  } else {
+    lines.push('🔥 **UFW:** Not available');
+  }
+
+  if (sec.openPorts.unexpected.length > 0) {
+    const portList = sec.openPorts.unexpected.map((p) => `\`${p.port}${p.public ? '/public' : '/local'}\``).join(', ');
+    lines.push(`🌐 **Unexpected ports:** ${portList}`);
+  } else {
+    const publicCount = sec.openPorts.ports.filter((p) => p.public).length;
+    lines.push(`🌐 **Open ports:** ${sec.openPorts.ports.length} (${publicCount} public, all expected)`);
+  }
+
+  if (sec.webAttacks?.count > 0) {
+    lines.push(`🛡️ **Web probes:** ${sec.webAttacks.count} recent suspicious request(s)`);
+  }
+
+  if (sec.suspiciousProcs.length > 0) {
+    lines.push(`👀 **Suspicious processes:** ${sec.suspiciousProcs.length} detected`);
+    for (const p of sec.suspiciousProcs.slice(0, 3)) {
+      lines.push(`   - PID \`${p.pid}\`: ${p.reason} - \`${p.command.substring(0, 60)}\``);
+    }
+  } else {
+    lines.push('👀 **Suspicious procs:** None');
+  }
+
+  if (sec.rootkit.available) {
+    const rkStatus = sec.rootkit.infected ? 'INFECTED' : `Clean (${sec.rootkit.warnings} warnings)`;
+    lines.push(`🔍 **rkhunter:** ${rkStatus}`);
+  } else {
+    lines.push('🔍 **rkhunter:** Not installed');
+  }
+
+  if (sec.clamav.available) {
+    const avStatus = sec.clamav.infected > 0 ? `${sec.clamav.infected} INFECTED` : 'Clean';
+    lines.push(`🦠 **ClamAV:** ${avStatus}`);
+  } else {
+    lines.push('🦠 **ClamAV:** Not installed');
+  }
+
+  if (sec.findings.length > 0) {
+    lines.push('');
+    lines.push('**Findings:**');
+    for (const finding of sec.findings.slice(0, 5)) {
+      lines.push(`- ${finding.level}: ${finding.title}`);
+    }
+  }
+
+  const colorMap = {
+    SECURE: config.COLORS.GREEN,
+    ADVISORY: config.COLORS.YELLOW,
+    WARNING: config.COLORS.ORANGE,
+    CRITICAL: config.COLORS.RED,
+  };
+
+  return new EmbedBuilder()
+    .setTitle('🛡️  SECURITY STATUS')
+    .setColor(colorMap[sec.level] || config.COLORS.DARK)
+    .setDescription(lines.join('\n'))
+    .setFooter({ text: 'Refreshes every 5 minutes; alerts use recent windows, not cumulative noise' })
+    .setTimestamp();
+}
+
 module.exports = {
   buildLiveStatsEmbed,
   buildPm2Embed,
   buildDockerEmbed,
-  buildSecurityEmbed,
+  buildSecurityEmbed: buildSecurityEmbedHardened,
   buildDailySummaryEmbed,
   buildWeeklySummaryEmbed,
   progressBar,

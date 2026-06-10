@@ -1,7 +1,8 @@
 const { safeExec } = require('../utils/exec');
-const { alertMention } = require('../utils/alert');
+const { alertMention, alertAllowedMentions } = require('../utils/alert');
 const config = require('../../config');
 const logger = require('../utils/logger');
+const { codeBlock, sendNoMentions } = require('../utils/discord');
 
 let resources = null;
 
@@ -31,18 +32,21 @@ async function runRkhunter() {
       logger.info('rkhunter not installed, skipping.');
       return;
     }
-    await thread.send(`🔍 **rkhunter scan failed:**\n\`\`\`\n${stderr.substring(0, 1800)}\n\`\`\``);
+    await sendNoMentions(thread, `🔍 **rkhunter scan failed:**\n${codeBlock(stderr, 1800)}`);
     return;
   }
 
   if (output) {
-    await thread.send(`🔍 **rkhunter scan — warnings found:**\n\`\`\`\n${output.substring(0, 1800)}\n\`\`\``);
+    await sendNoMentions(thread, `🔍 **rkhunter scan - warnings found:**\n${codeBlock(output, 1800)}`);
 
     if (output.toLowerCase().includes('rootkit')) {
-      await thread.send(`🔴 ${alertMention()} **CRITICAL: Potential rootkit detected!**`);
+      await thread.send({
+        content: `🔴 ${alertMention()} **CRITICAL: Potential rootkit detected!**`,
+        allowedMentions: alertAllowedMentions(),
+      });
     }
   } else {
-    await thread.send('🔍 **rkhunter scan:** ✅ No warnings. System clean.');
+    await sendNoMentions(thread, '🔍 **rkhunter scan:** No warnings. System clean.');
   }
 
   logger.info('rkhunter scan complete.');
@@ -63,14 +67,14 @@ async function runClamAVScan() {
   logger.info('Starting ClamAV scan on critical directories...');
 
   // Scan /tmp, /var/tmp, /home — common malware locations
-  const scanPaths = ['/tmp', '/var/tmp', `/home/${config.PM2_USER}`];
-  const scanPath = scanPaths.join(' ');
+  const scanPaths = ['/tmp', '/var/tmp'];
+  if (config.PM2_USER && /^[a-z_][a-z0-9_-]*[$]?$/i.test(config.PM2_USER)) {
+    scanPaths.push(`/home/${config.PM2_USER}`);
+  }
 
-  const { stdout } = await safeExec(
-    'bash',
-    ['-c', `clamscan -r --no-summary --infected ${scanPath} 2>/dev/null; echo "---CLAM_EXIT:$?"`],
-    { timeout: 600000 } // 10 min timeout
-  );
+  const { stdout } = await safeExec('clamscan', ['-r', '--no-summary', '--infected', ...scanPaths], {
+    timeout: 600000,
+  });
 
   const infected = stdout
     .split('\n')
@@ -82,15 +86,15 @@ async function runClamAVScan() {
 
   if (infected.length > 0) {
     if (state.lastClamAVInfected !== infectedHash) {
-      const alertMsg = `🦠 **ClamAV scan — ${infected.length} INFECTED file(s) found!**\n${alertMention()}\n\`\`\`\n${infected.slice(0, 20).join('\n')}\n\`\`\``;
-      await thread.send(alertMsg.substring(0, 2000));
-      
+      const alertMsg = `🦠 **ClamAV scan - ${infected.length} INFECTED file(s) found!**\n${alertMention()}\n${codeBlock(infected.slice(0, 20).join('\n'), 1500)}`;
+      await thread.send({ content: alertMsg.substring(0, 2000), allowedMentions: alertAllowedMentions() });
+
       await require('../utils/storage').updateState((s) => {
         s.lastClamAVInfected = infectedHash;
       });
     }
   } else {
-    await thread.send('🦠 **ClamAV scan:** ✅ No infected files found.');
+    await sendNoMentions(thread, '🦠 **ClamAV scan:** No infected files found.');
     if (state.lastClamAVInfected) {
       await require('../utils/storage').updateState((s) => {
         s.lastClamAVInfected = null;

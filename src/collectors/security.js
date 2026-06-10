@@ -1,7 +1,11 @@
+const fs = require('fs').promises;
+const net = require('net');
 const { safeExec } = require('../utils/exec');
 const logPaths = require('../utils/logPaths');
 const config = require('../../config');
-const fs = require('fs').promises;
+const { getState } = require('../utils/storage');
+const { grepCount, readLogChunk, tailLog } = require('../utils/logReader');
+const { summarizeEvents, ensureSecurityState, SEVERITY_RANK } = require('../utils/securityState');
 
 async function getSecurityStatus() {
   const [sshInfo, fail2banInfo, ufwInfo, openPorts, suspiciousProcs, lastLogins, rootkitStatus, clamStatus] =
@@ -16,42 +20,31 @@ async function getSecurityStatus() {
       getClamAVStatus(),
     ]);
 
-  // Determine overall threat level
-  let level = 'SECURE';
-  let levelEmoji = '🟢';
+  const state = getState();
+  const securityState = ensureSecurityState(state);
+  sshInfo.recentWindow = buildRecentSummary(securityState.recentSshFailures, config.SSH_FAIL_WINDOW_MS, 'ip');
+  ufwInfo.recentWindow = buildRecentSummary(securityState.recentUfwBlocks, config.SSH_FAIL_WINDOW_MS, 'dstPort');
+  const webAttackWindow = buildRecentSummary(securityState.recentNginxAttacks, config.SSH_FAIL_WINDOW_MS, 'type');
 
-  const scores = [];
+  const findings = buildFindings({
+    sshInfo,
+    fail2banInfo,
+    ufwInfo,
+    openPorts,
+    suspiciousProcs,
+    rootkitStatus,
+    clamStatus,
+    webAttackWindow,
+  });
 
-  // We no longer penalize for cumulative SSH failures or active bans,
-  // as this is expected internet noise for public servers.
-  // Instead, we only alert if there's a high number of active, unbanned failures.
-  if (fail2banInfo.available && fail2banInfo.currentlyFailed >= config.SSH_FAIL_WARN_THRESHOLD) {
-    scores.push(2);
-  } else if (!fail2banInfo.available && sshInfo.failedCount >= config.SSH_FAIL_CRIT_THRESHOLD) {
-    // If Fail2Ban is unavailable, we still use SSH failures but rely on the daily accumulator 
-    // to avoid real-time spam. We won't score it here unless it's extraordinarily high.
-  }
-
-  if (suspiciousProcs.length > 0) scores.push(3);
-  if (rootkitStatus.infected) scores.push(3);
-  if (clamStatus.infected > 0) scores.push(3);
-
-  const maxScore = Math.max(0, ...scores);
-  if (maxScore >= 3) {
-    level = 'CRITICAL';
-    levelEmoji = '🔴';
-  } else if (maxScore >= 2) {
-    level = 'WARNING';
-    levelEmoji = '🟠';
-  } else if (maxScore >= 1) {
-    level = 'ADVISORY';
-    levelEmoji = '🟡';
-  }
+  const maxRank = Math.max(0, ...findings.map((finding) => SEVERITY_RANK[finding.level] || 0));
+  const level = rankToLevel(maxRank);
 
   return {
     level,
-    levelEmoji,
-    shouldAlert: maxScore >= 2,
+    levelEmoji: levelToEmoji(level),
+    shouldAlert: maxRank >= SEVERITY_RANK.WARNING,
+    findings,
     ssh: sshInfo,
     fail2ban: fail2banInfo,
     ufw: ufwInfo,
@@ -60,51 +53,293 @@ async function getSecurityStatus() {
     lastLogins,
     rootkit: rootkitStatus,
     clamav: clamStatus,
+    webAttacks: webAttackWindow,
   };
 }
 
-async function getSSHInfo() {
-  const result = { failedCount: 0, failedIPs: [], recentAttempts: [], available: false };
+function buildRecentSummary(events, windowMs, groupKey) {
+  const summary = summarizeEvents(events, windowMs, Date.now(), groupKey);
+  return {
+    count: summary.count,
+    unique: summary.unique,
+    top: summary.top.map((item) => ({ [groupKey]: item.value, count: item.count })),
+  };
+}
 
-  // Count failed attempts from auth log (distro-aware path)
-  const authLog = logPaths.resolve().auth;
-  if (!authLog) return result;
-  const { stdout, success } = await safeExec('sudo', ['grep', '-c', 'Failed password', authLog], {
-    timeout: 5000,
-  });
+function rankToLevel(rank) {
+  if (rank >= SEVERITY_RANK.CRITICAL) return 'CRITICAL';
+  if (rank >= SEVERITY_RANK.WARNING) return 'WARNING';
+  if (rank >= SEVERITY_RANK.ADVISORY) return 'ADVISORY';
+  return 'SECURE';
+}
 
-  if (success) {
-    result.available = true;
-    result.failedCount = parseInt(stdout.trim()) || 0;
+function levelToEmoji(level) {
+  if (level === 'CRITICAL') return '🔴';
+  if (level === 'WARNING') return '🟠';
+  if (level === 'ADVISORY') return '🟡';
+  return '🟢';
+}
+
+function addFinding(findings, level, key, title, detail, action = null) {
+  findings.push({ level, key, title, detail, action });
+}
+
+function buildFindings({
+  sshInfo,
+  fail2banInfo,
+  ufwInfo,
+  openPorts,
+  suspiciousProcs,
+  rootkitStatus,
+  clamStatus,
+  webAttackWindow,
+}) {
+  const findings = [];
+  const publicListeners = openPorts.ports.filter((p) => p.public);
+  const publicSsh = publicListeners.some((p) => sshInfo.config.ports.includes(p.port) || p.port === 22);
+  const unexpectedPublic = openPorts.unexpected.filter((p) => p.public);
+  const topSshIpCount = sshInfo.recentWindow.top[0]?.count || 0;
+
+  if (rootkitStatus.infected) {
+    addFinding(findings, 'CRITICAL', 'rootkit', 'Potential rootkit detected', 'rkhunter output indicates a rootkit.');
   }
 
-  // Get unique IPs with failed attempts
-  const ipResult = await safeExec(
-    'bash',
-    [
-      '-c',
-      `sudo grep 'Failed password' ${authLog} | grep -oP 'from \\\\K[^ ]+' | sort | uniq -c | sort -rn | head -10`,
-    ],
-    { timeout: 5000 }
-  );
+  if (clamStatus.infected > 0) {
+    addFinding(
+      findings,
+      'CRITICAL',
+      'clamav',
+      'Malware detected',
+      `ClamAV found ${clamStatus.infected} infected file(s).`
+    );
+  }
 
-  if (ipResult.success) {
-    const lines = ipResult.stdout.trim().split('\n').filter(Boolean);
-    for (const line of lines) {
-      const match = line.trim().match(/(\d+)\s+([\d.]+)/);
-      if (match) {
-        result.failedIPs.push({ count: parseInt(match[1]), ip: match[2] });
-      }
+  for (const proc of suspiciousProcs.slice(0, 5)) {
+    addFinding(
+      findings,
+      'CRITICAL',
+      `process:${proc.pid}:${proc.reason}`,
+      'Suspicious process detected',
+      `PID ${proc.pid}: ${proc.reason} (${proc.command.substring(0, 80)})`
+    );
+  }
+
+  if (!ufwInfo.available) {
+    addFinding(
+      findings,
+      publicListeners.length ? 'WARNING' : 'ADVISORY',
+      'ufw:missing',
+      'UFW unavailable',
+      'Firewall status could not be verified.'
+    );
+  } else if (ufwInfo.status !== 'active') {
+    addFinding(
+      findings,
+      publicListeners.length ? 'CRITICAL' : 'WARNING',
+      'ufw:inactive',
+      'Firewall inactive',
+      publicListeners.length
+        ? `UFW is inactive while ${publicListeners.length} public listener(s) are exposed.`
+        : 'UFW is inactive.'
+    );
+  }
+
+  if (unexpectedPublic.length > 0) {
+    addFinding(
+      findings,
+      'CRITICAL',
+      `ports:unexpected:${unexpectedPublic.map((p) => p.port).join(',')}`,
+      'Unexpected public listening port',
+      `Unexpected public port(s): ${unexpectedPublic.map((p) => p.port).join(', ')}.`
+    );
+  } else if (openPorts.unexpected.length > 0) {
+    addFinding(
+      findings,
+      'WARNING',
+      `ports:local:${openPorts.unexpected.map((p) => p.port).join(',')}`,
+      'Unexpected local listening port',
+      `Unexpected non-public port(s): ${openPorts.unexpected.map((p) => p.port).join(', ')}.`
+    );
+  }
+
+  if (publicSsh && !fail2banInfo.available) {
+    addFinding(
+      findings,
+      'WARNING',
+      'fail2ban:missing:ssh',
+      'Fail2Ban unavailable for public SSH',
+      'SSH is listening publicly but Fail2Ban could not be verified.'
+    );
+  } else if (publicSsh && fail2banInfo.available && !fail2banInfo.jails.some((j) => j.name === 'sshd')) {
+    addFinding(
+      findings,
+      'WARNING',
+      'fail2ban:sshd-missing',
+      'Fail2Ban sshd jail missing',
+      'Fail2Ban is running, but the sshd jail is not active.'
+    );
+  }
+
+  if (
+    sshInfo.recentWindow.count >= config.SSH_FAIL_WINDOW_CRIT_THRESHOLD ||
+    topSshIpCount >= config.SSH_FAIL_PER_IP_CRIT_THRESHOLD
+  ) {
+    addFinding(
+      findings,
+      'CRITICAL',
+      'ssh:spike',
+      'SSH brute-force spike',
+      `${sshInfo.recentWindow.count} failed SSH attempt(s) in the last ${Math.round(config.SSH_FAIL_WINDOW_MS / 60000)} minutes.`
+    );
+  } else if (
+    sshInfo.recentWindow.count >= config.SSH_FAIL_WINDOW_WARN_THRESHOLD ||
+    topSshIpCount >= config.SSH_FAIL_PER_IP_WARN_THRESHOLD ||
+    fail2banInfo.currentlyFailed >= config.SSH_FAIL_WARN_THRESHOLD
+  ) {
+    addFinding(
+      findings,
+      'WARNING',
+      'ssh:elevated',
+      'Elevated SSH failures',
+      `${sshInfo.recentWindow.count} recent failure(s), ${fail2banInfo.currentlyFailed} currently unbanned by Fail2Ban.`
+    );
+  }
+
+  if (publicSsh && sshInfo.config.available) {
+    if (sshInfo.config.passwordAuthentication !== 'no') {
+      addFinding(
+        findings,
+        'WARNING',
+        'ssh:password-auth',
+        'SSH password authentication enabled',
+        'Public SSH accepts passwords. Key-only SSH is safer for internet-facing servers.'
+      );
+    }
+    if (sshInfo.config.permitRootLogin === 'yes') {
+      addFinding(
+        findings,
+        'WARNING',
+        'ssh:root-login',
+        'SSH root login enabled',
+        'Root login over public SSH should be disabled.'
+      );
     }
   }
 
-  // Recent failed attempts (last 5)
-  const recentResult = await safeExec('bash', ['-c', `sudo grep 'Failed password' ${authLog} | tail -5`], {
-    timeout: 5000,
-  });
+  if (ufwInfo.recentWindow.count >= config.UFW_BLOCK_BATCH_CRIT_THRESHOLD) {
+    addFinding(
+      findings,
+      'CRITICAL',
+      'ufw:block-spike',
+      'Large firewall block spike',
+      `${ufwInfo.recentWindow.count} firewall blocks in the recent window.`
+    );
+  } else if (ufwInfo.recentWindow.count >= config.UFW_BLOCK_BATCH_WARN_THRESHOLD) {
+    addFinding(
+      findings,
+      'WARNING',
+      'ufw:block-elevated',
+      'Elevated firewall blocks',
+      `${ufwInfo.recentWindow.count} firewall blocks in the recent window.`
+    );
+  }
 
-  if (recentResult.success) {
-    result.recentAttempts = recentResult.stdout.trim().split('\n').filter(Boolean);
+  if (webAttackWindow.count >= config.NGINX_ATTACK_BATCH_CRIT_THRESHOLD) {
+    addFinding(
+      findings,
+      'CRITICAL',
+      'nginx:attack-spike',
+      'Large web attack spike',
+      `${webAttackWindow.count} suspicious nginx request(s) in the recent window.`
+    );
+  } else if (webAttackWindow.count >= config.NGINX_ATTACK_BATCH_WARN_THRESHOLD) {
+    addFinding(
+      findings,
+      'WARNING',
+      'nginx:attack-elevated',
+      'Elevated web probing',
+      `${webAttackWindow.count} suspicious nginx request(s) in the recent window.`
+    );
+  }
+
+  if (findings.length === 0 && sshInfo.failedCount >= config.SSH_FAIL_CRIT_THRESHOLD) {
+    addFinding(
+      findings,
+      'ADVISORY',
+      'ssh:cumulative-noise',
+      'Internet SSH noise observed',
+      `${sshInfo.failedCount} cumulative failed SSH attempt(s) are recorded, but no active spike is present.`
+    );
+  }
+
+  return findings;
+}
+
+async function getSSHInfo() {
+  const result = {
+    failedCount: 0,
+    failedIPs: [],
+    recentAttempts: [],
+    available: false,
+    recentWindow: { count: 0, unique: 0, top: [] },
+    config: await getSshdConfig(),
+  };
+
+  const authLog = logPaths.resolve().auth;
+  if (!authLog) return result;
+
+  const countResult = await grepCount(authLog, 'Failed password', 5000);
+  if (countResult.success) {
+    result.available = true;
+    result.failedCount = countResult.count;
+  }
+
+  const tailResult = await tailLog(authLog, 5000, 10000);
+  if (tailResult.success && tailResult.stdout.trim()) {
+    const failedLines = tailResult.stdout
+      .split('\n')
+      .filter((line) => /Failed password|Invalid user|maximum authentication attempts/i.test(line));
+
+    result.recentAttempts = failedLines.slice(-5);
+
+    const counts = new Map();
+    for (const line of failedLines) {
+      const ip = extractIp(line);
+      if (ip) counts.set(ip, (counts.get(ip) || 0) + 1);
+    }
+
+    result.failedIPs = [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([ip, count]) => ({ ip, count }));
+  }
+
+  return result;
+}
+
+async function getSshdConfig() {
+  const result = {
+    available: false,
+    passwordAuthentication: 'unknown',
+    permitRootLogin: 'unknown',
+    pubkeyAuthentication: 'unknown',
+    ports: [22],
+  };
+
+  let configResult = await safeExec('sudo', ['sshd', '-T'], { timeout: 5000 });
+  if (!configResult.success) {
+    configResult = await safeExec('sshd', ['-T'], { timeout: 5000 });
+  }
+  if (!configResult.success || !configResult.stdout.trim()) return result;
+
+  result.available = true;
+  for (const line of configResult.stdout.split('\n')) {
+    const [key, value] = line.trim().split(/\s+/, 2);
+    if (!key || !value) continue;
+    if (key === 'passwordauthentication') result.passwordAuthentication = value;
+    if (key === 'permitrootlogin') result.permitRootLogin = value;
+    if (key === 'pubkeyauthentication') result.pubkeyAuthentication = value;
+    if (key === 'port') result.ports = [parseInt(value, 10)].filter(Number.isInteger);
   }
 
   return result;
@@ -133,12 +368,14 @@ async function getFail2banInfo() {
     const failedMatch = jailResult.stdout.match(/Currently failed:\s*(\d+)/);
     const bannedMatch = jailResult.stdout.match(/Currently banned:\s*(\d+)/);
     const totalBannedMatch = jailResult.stdout.match(/Total banned:\s*(\d+)/);
+    const bannedIpsMatch = jailResult.stdout.match(/Banned IP list:\s*(.*)/);
 
     const jailInfo = {
       name: jail,
-      currentlyFailed: parseInt(failedMatch?.[1] || 0),
-      currentlyBanned: parseInt(bannedMatch?.[1] || 0),
-      totalBanned: parseInt(totalBannedMatch?.[1] || 0),
+      currentlyFailed: parseInt(failedMatch?.[1] || 0, 10),
+      currentlyBanned: parseInt(bannedMatch?.[1] || 0, 10),
+      totalBanned: parseInt(totalBannedMatch?.[1] || 0, 10),
+      bannedIPs: bannedIpsMatch ? bannedIpsMatch[1].split(/\s+/).filter(Boolean) : [],
     };
 
     result.jails.push(jailInfo);
@@ -151,14 +388,20 @@ async function getFail2banInfo() {
 }
 
 async function getUfwInfo() {
-  const result = { available: false, status: 'unknown', rules: [], blockedCount: 0 };
+  const result = {
+    available: false,
+    status: 'unknown',
+    rules: [],
+    blockedCount: 0,
+    recentWindow: { count: 0, unique: 0, top: [] },
+  };
 
   const { stdout, success } = await safeExec('sudo', ['ufw', 'status', 'verbose'], { timeout: 5000 });
   if (!success) return result;
 
   result.available = true;
   const statusMatch = stdout.match(/Status:\s*(\w+)/);
-  result.status = statusMatch ? statusMatch[1] : 'unknown';
+  result.status = statusMatch ? statusMatch[1].toLowerCase() : 'unknown';
 
   const lines = stdout.split('\n');
   let inRules = false;
@@ -172,14 +415,10 @@ async function getUfwInfo() {
     }
   }
 
-  // Count blocked connections from UFW log
-  const blockResult = await safeExec(
-    'bash',
-    ['-c', `sudo grep -c '\\[UFW BLOCK\\]' ${logPaths.resolve().ufw || '/dev/null'} 2>/dev/null || echo 0`],
-    { timeout: 5000 }
-  );
-  if (blockResult.success) {
-    result.blockedCount = parseInt(blockResult.stdout.trim()) || 0;
+  const ufwLog = logPaths.resolve().ufw;
+  if (ufwLog) {
+    const blockResult = await grepCount(ufwLog, '[UFW BLOCK]', 5000);
+    if (blockResult.success) result.blockedCount = blockResult.count;
   }
 
   return result;
@@ -188,33 +427,81 @@ async function getUfwInfo() {
 async function getOpenPorts() {
   const result = { ports: [], unexpected: [] };
 
-  const { stdout, success } = await safeExec('ss', ['-tlnp'], { timeout: 5000 });
+  const { stdout, success } = await safeExec('ss', ['-tulnp'], { timeout: 5000 });
   if (!success) return result;
 
   const lines = stdout.trim().split('\n').slice(1);
   for (const line of lines) {
-    const parts = line.trim().split(/\s+/);
-    const localAddr = parts[3] || '';
-    const portMatch = localAddr.match(/:(\d+)$/);
-    if (!portMatch) continue;
+    const parsed = parseSsLine(line);
+    if (!parsed) continue;
 
-    const port = parseInt(portMatch[1]);
-    const process = parts[5] || '';
+    result.ports.push(parsed);
 
-    result.ports.push({ port, process, local: localAddr });
-
-    if (!config.EXPECTED_PORTS.includes(port) && port < 49152) {
-      result.unexpected.push({ port, process, local: localAddr });
+    if (!config.EXPECTED_PORTS.includes(parsed.port) && parsed.port < 49152) {
+      result.unexpected.push(parsed);
     }
   }
 
   return result;
 }
 
+function parseSsLine(line) {
+  const parts = line.trim().split(/\s+/);
+  if (parts.length < 5) return null;
+
+  const netid = parts[0];
+  const localIndex = parts.findIndex((part, index) => index > 0 && parseAddressPort(part));
+  if (localIndex === -1) return null;
+
+  const local = parts[localIndex];
+  const parsed = parseAddressPort(local);
+  if (!parsed) return null;
+
+  const processMatch = line.match(/users:\(\("([^"]+)"/);
+  return {
+    protocol: netid,
+    port: parsed.port,
+    process: processMatch ? processMatch[1] : '',
+    local,
+    address: parsed.address,
+    public: isPublicBindAddress(parsed.address),
+  };
+}
+
+function parseAddressPort(value) {
+  if (!value || value.endsWith(':*')) return null;
+
+  const bracketMatch = value.match(/^\[(.*)]:(\d+)$/);
+  if (bracketMatch) {
+    return { address: bracketMatch[1], port: parseInt(bracketMatch[2], 10) };
+  }
+
+  const lastColon = value.lastIndexOf(':');
+  if (lastColon === -1) return null;
+
+  const port = parseInt(value.slice(lastColon + 1), 10);
+  if (!Number.isInteger(port)) return null;
+
+  return { address: value.slice(0, lastColon) || '*', port };
+}
+
+function isPublicBindAddress(address) {
+  const normalized = String(address || '')
+    .replace(/^\[|\]$/g, '')
+    .toLowerCase();
+  if (['127.0.0.1', 'localhost', '::1'].includes(normalized)) return false;
+  if (normalized.startsWith('127.')) return false;
+  if (normalized.startsWith('10.')) return false;
+  if (normalized.startsWith('192.168.')) return false;
+  if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(normalized)) return false;
+  if (normalized.startsWith('169.254.')) return false;
+  if (normalized.startsWith('fe80:')) return false;
+  return ['0.0.0.0', '::', '*'].includes(normalized) || net.isIP(normalized) !== 0;
+}
+
 async function getSuspiciousProcesses() {
   const suspicious = [];
 
-  // High CPU processes (>80% for non-system)
   const { stdout, success } = await safeExec('ps', ['aux', '--sort=-%cpu'], { timeout: 5000 });
   if (!success) return suspicious;
 
@@ -228,12 +515,10 @@ async function getSuspiciousProcesses() {
     const stat = parts[7] || '';
     const command = parts.slice(10).join(' ');
 
-    // Skip zombie/defunct processes (harmless, often caused by monitoring tools)
     if (stat.includes('Z') || command.includes('<defunct>')) continue;
 
-    // Skip known system utilities (the bot itself spawns these)
     const safeCommands = [
-      /^\[.*\]$/,
+      /^\[.*]$/,
       /^ps\b/,
       /^ss\b/,
       /^grep\b/,
@@ -249,7 +534,6 @@ async function getSuspiciousProcesses() {
     ];
     if (safeCommands.some((p) => p.test(command.trim()))) continue;
 
-    // Flag crypto miner patterns
     const minerPatterns = [/xmrig/i, /minerd/i, /cpuminer/i, /stratum/i, /nicehash/i, /cryptonight/i];
     const isMiner = minerPatterns.some((p) => p.test(command));
 
@@ -258,16 +542,14 @@ async function getSuspiciousProcesses() {
       continue;
     }
 
-    // Unusually high CPU from non-root, non-system users
     if (cpu > 80 && !['root', 'www-data', 'mysql', 'postgres', 'redis'].includes(user)) {
       suspicious.push({ pid, user, cpu, mem, command: command.substring(0, 100), reason: 'High CPU usage' });
     }
   }
 
-  // Check for deleted executables (common malware indicator)
   const deletedResult = await safeExec(
-    'sudo',
-    ['bash', '-c', "ls -la /proc/*/exe 2>/dev/null | grep '(deleted)' | head -20"],
+    'bash',
+    ['-c', "sudo ls -la /proc/*/exe 2>/dev/null | grep '(deleted)' | head -20"],
     { timeout: 5000 }
   );
   if (deletedResult.success && deletedResult.stdout.trim()) {
@@ -295,12 +577,10 @@ async function getSuspiciousProcesses() {
           '/usr/bin/containerd',
           '/usr/bin/dockerd',
           '/snap/',
-          '/var/lib/snapd/'
+          '/var/lib/snapd/',
         ];
 
-        if (safeDeleted.some(p => exePath.startsWith(p) || exePath.includes(p))) {
-          continue;
-        }
+        if (safeDeleted.some((p) => exePath.startsWith(p) || exePath.includes(p))) continue;
 
         suspicious.push({
           pid,
@@ -308,15 +588,6 @@ async function getSuspiciousProcesses() {
           cpu: 0,
           mem: 0,
           command: exePath,
-          reason: 'Deleted executable running',
-        });
-      } else {
-        suspicious.push({
-          pid: 'N/A',
-          user: 'N/A',
-          cpu: 0,
-          mem: 0,
-          command: dl.trim().substring(0, 100),
           reason: 'Deleted executable running',
         });
       }
@@ -353,21 +624,19 @@ async function getLastLogins() {
 async function getRootkitStatus() {
   const result = { available: false, lastScan: 'Never', infected: false, warnings: 0, summary: '' };
 
-  // Check rkhunter log
   try {
     const stat = await fs.stat('/var/log/rkhunter.log');
     result.lastScan = stat.mtime.toISOString();
     result.available = true;
 
-    const { stdout, success } = await safeExec('sudo', ['tail', '-50', '/var/log/rkhunter.log'], { timeout: 5000 });
-
-    if (success) {
-      const warningMatch = stdout.match(/warnings found:\s*(\d+)/i);
-      if (warningMatch) result.warnings = parseInt(warningMatch[1]);
-      if (stdout.toLowerCase().includes('rootkit') && stdout.toLowerCase().includes('found')) {
+    const tail = await tailLog('/var/log/rkhunter.log', 50, 5000);
+    if (tail.success) {
+      const warningMatch = tail.stdout.match(/warnings found:\s*(\d+)/i);
+      if (warningMatch) result.warnings = parseInt(warningMatch[1], 10);
+      if (tail.stdout.toLowerCase().includes('rootkit') && tail.stdout.toLowerCase().includes('found')) {
         result.infected = true;
       }
-      result.summary = stdout
+      result.summary = tail.stdout
         .split('\n')
         .filter((l) => l.includes('Warning') || l.includes('Rootkit'))
         .slice(0, 5)
@@ -383,24 +652,22 @@ async function getRootkitStatus() {
 async function getClamAVStatus() {
   const result = { available: false, lastScan: 'Never', infected: 0, scanned: 0, summary: '' };
 
-  // Check if ClamAV is installed
   const { success } = await safeExec('which', ['clamscan'], { timeout: 3000 });
   if (!success) return result;
 
   result.available = true;
 
-  // Check for recent scan logs
   try {
     const logPath = '/var/log/clamav/clamav.log';
     const stat = await fs.stat(logPath);
     result.lastScan = stat.mtime.toISOString();
 
-    const { stdout } = await safeExec('sudo', ['tail', '-20', logPath], { timeout: 5000 });
-    if (stdout) {
-      const infectedMatch = stdout.match(/Infected files:\s*(\d+)/);
-      const scannedMatch = stdout.match(/Scanned files:\s*(\d+)/);
-      if (infectedMatch) result.infected = parseInt(infectedMatch[1]);
-      if (scannedMatch) result.scanned = parseInt(scannedMatch[1]);
+    const tail = await tailLog(logPath, 20, 5000);
+    if (tail.stdout) {
+      const infectedMatch = tail.stdout.match(/Infected files:\s*(\d+)/);
+      const scannedMatch = tail.stdout.match(/Scanned files:\s*(\d+)/);
+      if (infectedMatch) result.infected = parseInt(infectedMatch[1], 10);
+      if (scannedMatch) result.scanned = parseInt(scannedMatch[1], 10);
     }
   } catch {
     /* no scan log */
@@ -409,27 +676,17 @@ async function getClamAVStatus() {
   return result;
 }
 
-// Get new auth log entries since a given offset
 async function getAuthLogEntries(sinceOffset = 0) {
-  try {
-    const authLogPath = logPaths.resolve().auth;
-    if (!authLogPath) return { entries: [], newOffset: sinceOffset };
-    const stat = await fs.stat(authLogPath);
-    if (stat.size <= sinceOffset) return { entries: [], newOffset: sinceOffset };
+  const authLogPath = logPaths.resolve().auth;
+  if (!authLogPath) return { entries: [], newOffset: sinceOffset };
+  const result = await readLogChunk(authLogPath, sinceOffset, config.LOG_TAIL_MAX_BYTES);
+  return { entries: result.entries, newOffset: result.newOffset };
+}
 
-    const { stdout, success } = await safeExec(
-      'bash',
-      ['-c', `sudo tail -c +${sinceOffset + 1} ${authLogPath} | head -c 50000`],
-      { timeout: 5000 }
-    );
-
-    if (!success) return { entries: [], newOffset: sinceOffset };
-
-    const entries = stdout.trim().split('\n').filter(Boolean);
-    return { entries, newOffset: stat.size };
-  } catch {
-    return { entries: [], newOffset: sinceOffset };
-  }
+function extractIp(line) {
+  const match = String(line).match(/\bfrom\s+([0-9a-f:.]+)\b/i);
+  if (!match) return null;
+  return net.isIP(match[1]) ? match[1] : null;
 }
 
 module.exports = {
@@ -443,4 +700,7 @@ module.exports = {
   getRootkitStatus,
   getClamAVStatus,
   getAuthLogEntries,
+  extractIp,
+  parseSsLine,
+  isPublicBindAddress,
 };
