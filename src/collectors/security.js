@@ -259,20 +259,59 @@ async function getSuspiciousProcesses() {
   // Check for deleted executables (common malware indicator)
   const deletedResult = await safeExec(
     'bash',
-    ['-c', "sudo ls -la /proc/*/exe 2>/dev/null | grep '(deleted)' | head -5"],
+    ['-c', "sudo ls -la /proc/*/exe 2>/dev/null | grep '(deleted)' | head -20"],
     { timeout: 5000 }
   );
   if (deletedResult.success && deletedResult.stdout.trim()) {
     const dLines = deletedResult.stdout.trim().split('\n');
     for (const dl of dLines) {
-      suspicious.push({
-        pid: 'N/A',
-        user: 'N/A',
-        cpu: 0,
-        mem: 0,
-        command: dl.trim().substring(0, 100),
-        reason: 'Deleted executable running',
-      });
+      const match = dl.match(/\/proc\/(\d+)\/exe\s+->\s+(.*?)\s+\(deleted\)/);
+      if (match) {
+        const pid = match[1];
+        const exePath = match[2];
+        const parts = dl.trim().split(/\s+/);
+        const user = parts.length > 2 ? parts[2] : 'N/A';
+
+        const safeDeleted = [
+          '/usr/bin/dbus-daemon',
+          '/usr/bin/python',
+          '/usr/sbin/nginx',
+          '/usr/bin/node',
+          '/usr/local/bin/node',
+          '/usr/bin/pm2',
+          '/usr/libexec/',
+          '/usr/lib/systemd/',
+          '/lib/systemd/',
+          '/usr/sbin/rsyslogd',
+          '/usr/sbin/cron',
+          '/usr/bin/containerd',
+          '/usr/bin/dockerd',
+          '/snap/',
+          '/var/lib/snapd/'
+        ];
+
+        if (safeDeleted.some(p => exePath.startsWith(p) || exePath.includes(p))) {
+          continue;
+        }
+
+        suspicious.push({
+          pid,
+          user,
+          cpu: 0,
+          mem: 0,
+          command: exePath,
+          reason: 'Deleted executable running',
+        });
+      } else {
+        suspicious.push({
+          pid: 'N/A',
+          user: 'N/A',
+          cpu: 0,
+          mem: 0,
+          command: dl.trim().substring(0, 100),
+          reason: 'Deleted executable running',
+        });
+      }
     }
   }
 
