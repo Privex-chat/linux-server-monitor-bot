@@ -78,7 +78,7 @@ async function watchAuthLog() {
       /COMMAND=.*\/usr\/bin\/rkhunter/,
       /COMMAND=.*\/usr\/sbin\/hddtemp/,
       /COMMAND=.*\/usr\/sbin\/nvme/,
-      /COMMAND=.*\/usr\/bin\/ls -la \/proc/,
+      /COMMAND=.*ls -la \/proc/,
     ];
 
     const importantLines = lines.filter((l) => {
