@@ -126,7 +126,7 @@ client.once('ready', async () => {
         logger.info('Running daily summary...');
         await summaries.runDaily();
       },
-      { timezone: 'UTC' }
+      { timezone: config.TIMEZONE }
     );
     cronJobs.push(dailyJob);
 
@@ -137,7 +137,7 @@ client.once('ready', async () => {
         logger.info('Running weekly summary...');
         await summaries.runWeekly();
       },
-      { timezone: 'UTC' }
+      { timezone: config.TIMEZONE }
     );
     cronJobs.push(weeklyJob);
 
@@ -148,7 +148,7 @@ client.once('ready', async () => {
         logger.info('Running security deep scan...');
         await securityScan.runAll();
       },
-      { timezone: 'UTC' }
+      { timezone: config.TIMEZONE }
     );
     cronJobs.push(scanJob);
 
@@ -158,9 +158,9 @@ client.once('ready', async () => {
     );
     logger.info(`  Security status: every ${config.SECURITY_INTERVAL_MS / 1000}s`);
     logger.info(`  Log watcher: every ${config.LOG_CHECK_INTERVAL_MS / 1000}s`);
-    logger.info(`  Daily summary: ${config.DAILY_CRON} (UTC)`);
-    logger.info(`  Weekly summary: ${config.WEEKLY_CRON} (UTC)`);
-    logger.info(`  Security scan: ${config.SECURITY_SCAN_CRON} (UTC)`);
+    logger.info(`  Daily summary: ${config.DAILY_CRON} (${config.TIMEZONE})`);
+    logger.info(`  Weekly summary: ${config.WEEKLY_CRON} (${config.TIMEZONE})`);
+    logger.info(`  Security scan: ${config.SECURITY_SCAN_CRON} (${config.TIMEZONE})`);
   } catch (err) {
     logger.error(err, 'Setup failed');
     process.exit(1);

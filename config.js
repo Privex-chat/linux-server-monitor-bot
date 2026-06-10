@@ -20,7 +20,7 @@ module.exports = {
   SECURITY_INTERVAL_MS: 5 * 60 * 1000,
   LOG_CHECK_INTERVAL_MS: 30 * 1000,
 
-  // ── Cron (UTC — adjust for your timezone) ────────────────
+  // ── Cron (Evaluated against your TIMEZONE) ────────────────
   DAILY_CRON: process.env.DAILY_CRON || '30 18 * * *',
   WEEKLY_CRON: process.env.WEEKLY_CRON || '30 18 * * 0',
   SECURITY_SCAN_CRON: process.env.SECURITY_SCAN_CRON || '0 12 * * *',
