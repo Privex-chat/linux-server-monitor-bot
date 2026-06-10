@@ -86,6 +86,8 @@ async function watchAuthLog() {
       if (/pam_unix\(.*:session\):\s*session (opened|closed)/i.test(l)) return false;
       // Skip CRON entirely
       if (/CRON\[/i.test(l)) return false;
+      // Skip sudo wrapped lines
+      if (/\(command continued\)/i.test(l)) return false;
       // Skip bot's own sudo monitoring commands
       if (botCommandPatterns.some((p) => p.test(l))) return false;
 

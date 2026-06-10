@@ -258,8 +258,8 @@ async function getSuspiciousProcesses() {
 
   // Check for deleted executables (common malware indicator)
   const deletedResult = await safeExec(
-    'bash',
-    ['-c', "sudo ls -la /proc/*/exe 2>/dev/null | grep '(deleted)' | head -20"],
+    'sudo',
+    ['bash', '-c', "ls -la /proc/*/exe 2>/dev/null | grep '(deleted)' | head -20"],
     { timeout: 5000 }
   );
   if (deletedResult.success && deletedResult.stdout.trim()) {
