@@ -44,7 +44,7 @@ module.exports = {
     ? process.env.EXPECTED_PORTS.split(',')
         .map((p) => parseInt(p.trim(), 10))
         .filter(Number.isInteger)
-    : [22, 53, 80, 443],
+    : [22, 53, 68, 80, 443],
 
   // Noise-aware security windows. Cumulative internet scanner noise is
   // summarized, while recent spikes and missing protections still alert.

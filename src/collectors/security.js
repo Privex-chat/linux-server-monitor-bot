@@ -633,9 +633,12 @@ async function getRootkitStatus() {
     if (tail.success) {
       const warningMatch = tail.stdout.match(/warnings found:\s*(\d+)/i);
       if (warningMatch) result.warnings = parseInt(warningMatch[1], 10);
-      if (tail.stdout.toLowerCase().includes('rootkit') && tail.stdout.toLowerCase().includes('found')) {
+      
+      const possibleRootkitsMatch = tail.stdout.match(/Possible rootkits:\s*(\d+)/i);
+      if (possibleRootkitsMatch && parseInt(possibleRootkitsMatch[1], 10) > 0) {
         result.infected = true;
       }
+      
       result.summary = tail.stdout
         .split('\n')
         .filter((l) => l.includes('Warning') || l.includes('Rootkit'))
